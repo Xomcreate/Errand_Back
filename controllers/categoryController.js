@@ -1,10 +1,23 @@
 const Category = require("../models/Category");
 
+// Build tree for nested categories
+const buildCategoryTree = (categories, parentId = null) => {
+  const tree = [];
+  categories
+    .filter(cat => String(cat.parentId) === String(parentId))
+    .forEach(cat => {
+      const children = buildCategoryTree(categories, cat._id);
+      tree.push({ ...cat._doc, subCategories: children });
+    });
+  return tree;
+};
+
 // Get all categories
 exports.getCategories = async (req, res) => {
   try {
-    const categories = await Category.find();
-    res.json(categories);
+    const categories = await Category.find().sort({ name: 1 });
+    const tree = buildCategoryTree(categories);
+    res.json(tree);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -29,13 +42,13 @@ exports.createCategory = async (req, res) => {
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, isVisible } = req.body;
+    const { name, isVisible, parentId } = req.body;
     const slug = name.toLowerCase().trim().replace(/\s+/g, "-");
     const image = req.file ? req.file.path : null;
 
     const category = await Category.findByIdAndUpdate(
       id,
-      { name, slug, isVisible, ...(image && { image }) },
+      { name, slug, isVisible, parentId, ...(image && { image }) },
       { new: true }
     );
 

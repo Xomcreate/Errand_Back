@@ -10,10 +10,11 @@ import reviewRoutes from "./routes/reviewRoutes.js";
 import newsletterRoutes from "./routes/newsletterRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import authRoutes from "./routes/authRoutes.js"; // ✅ FIXED
-import cartRoutes from "./routes/cartRoutes.js";
 import wishlistRoutes from "./routes/wishlistRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
+import cookieParser from "cookie-parser";
+import checkoutRoutes from "./routes/checkoutRoutes.js";
 import { errorHandler } from "./middleware/errorMiddleware.js"; // ✅ FIXED
 
 
@@ -36,7 +37,7 @@ connectDB();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
+app.use(cookieParser());
 // Serve uploaded files statically
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
@@ -49,7 +50,7 @@ app.use("/api/categories",categoryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/newsletter", newsletterRoutes);
 app.use("/api/wishlist", wishlistRoutes);
-app.use("/api/cart", cartRoutes);
+app.use("/api/checkout", checkoutRoutes);
 app.use("/api/referrals", referralRoutes);
 
 app.use("/api/auth", authRoutes);

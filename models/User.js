@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
     address: { type: String, required: function () { return this.role === "vendor"; } },
     password: { type: String, required: true, minlength: 8 },
     status: { type: String, enum: ["Active", "Blocked"], default: "Active" }, // ✅ store user status
+    isVerified: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

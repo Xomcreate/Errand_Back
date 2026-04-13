@@ -1,62 +1,135 @@
-// backend/controllers/productController.js
-import Product from "../models/Product.js"; // make sure your Product model uses ESM too
+import Product from "../models/Product.js";
 
-// Get all products
+// GET ALL PRODUCTS
 export const getProducts = async (req, res) => {
   try {
-    const products = await Product.find().populate("category");
+    const { category } = req.query;
+
+    let filter = {};
+    if (category) filter.category = category;
+
+    const products = await Product.find(filter)
+      .populate("category")
+      .sort({ createdAt: -1 });
+
     res.json(products);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// Create product
-export const createProduct = async (req, res) => {
-  try {
-    const { name, vendor, category } = req.body;
-    if (!name || !vendor || !category)
-      return res.status(400).json({ message: "Missing fields" });
-
-    // Handle file path correctly
-    const image = req.file ? req.file.path.replace(/\\/g, "/") : null;
-
-    const newProduct = new Product({ name, vendor, category, image });
-    await newProduct.save();
-
-    res.status(201).json(newProduct);
   } catch (err) {
-    console.error("Create product error:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: err.message });
   }
 };
 
-// Update product
-export const updateProduct = async (req, res) => {
+// GET SINGLE
+export const getProductById = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updates = req.body;
+    const product = await Product.findById(req.params.id).populate("category");
 
-    if (req.file) updates.image = req.file.path.replace(/\\/g, "/");
-
-    const product = await Product.findByIdAndUpdate(id, updates, { new: true }).populate("category");
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     res.json(product);
-  } catch (error) {
-    console.error("Update product error:", error);
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };
 
-// Delete product
+// CREATE PRODUCT (FIXED)
+export const createProduct = async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      brand,
+      category,
+    } = req.body;
+
+    const price = Number(req.body.price);
+    const oldPrice = req.body.oldPrice ? Number(req.body.oldPrice) : null;
+
+    const isFlashSale = req.body.isFlashSale === "true";
+    const isDealOfTheDay = req.body.isDealOfTheDay === "true";
+    const isTrending = req.body.isTrending === "true";
+
+    const dealPrice = req.body.dealPrice ? Number(req.body.dealPrice) : null;
+    const dealEnds = req.body.dealEnds ? new Date(req.body.dealEnds) : null;
+
+    if (!name || !brand || !category || !price) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const image = req.file ? req.file.path.replace(/\\/g, "/") : null;
+
+    const newProduct = new Product({
+      name,
+      description,
+      brand,
+      category,
+      price,
+      oldPrice,
+      image,
+      isFlashSale,
+      isDealOfTheDay,
+      isTrending,
+      dealPrice,
+      dealEnds,
+    });
+
+    await newProduct.save();
+
+    const populated = await newProduct.populate("category");
+
+    res.status(201).json(populated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// UPDATE PRODUCT (FIXED SAME LOGIC)
+export const updateProduct = async (req, res) => {
+  try {
+    const updates = req.body;
+
+    if (req.file) {
+      updates.image = req.file.path.replace(/\\/g, "/");
+    }
+
+    if (updates.price) updates.price = Number(updates.price);
+    if (updates.oldPrice) updates.oldPrice = Number(updates.oldPrice);
+    if (updates.dealPrice) updates.dealPrice = Number(updates.dealPrice);
+
+    updates.isFlashSale = updates.isFlashSale === "true";
+    updates.isDealOfTheDay = updates.isDealOfTheDay === "true";
+    updates.isTrending = updates.isTrending === "true";
+
+    if (updates.dealEnds) {
+      updates.dealEnds = new Date(updates.dealEnds);
+    }
+
+    const updated = await Product.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true }
+    ).populate("category");
+
+    if (!updated) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// DELETE
 export const deleteProduct = async (req, res) => {
   try {
-    const { id } = req.params;
-    await Product.findByIdAndDelete(id);
-    res.json({ message: "Product deleted" });
-  } catch (error) {
-    console.error("Delete product error:", error);
-    res.status(500).json({ message: error.message });
+    const deleted = await Product.findByIdAndDelete(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json({ message: "Product deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

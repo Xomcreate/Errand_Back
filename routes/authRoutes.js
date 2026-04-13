@@ -6,8 +6,10 @@ import {
   deleteUser,
   resetPassword,
   toggleStatus,
-  updateProfile
+  updateProfile,
+  toggleVerification
 } from "../controllers/authController.js";
+
 
 
 const router = express.Router();
@@ -20,6 +22,7 @@ router.get("/users", getAllUsers);
 router.delete("/users/:id", deleteUser);
 router.post("/users/:id/reset-password", resetPassword);
 router.patch("/users/:id/toggle-status", toggleStatus);
+router.patch("/users/:id/toggle-verify", toggleVerification);
 router.put("/users/:id", updateProfile);
 
 

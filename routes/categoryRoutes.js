@@ -1,11 +1,9 @@
-// routes/categoryRoutes.js
 import express from "express";
 import { upload } from "../middleware/upload.js";
 import { getCategories, createCategory, updateCategory, deleteCategory } from "../controllers/categoryController.js";
 
 const router = express.Router();
 
-// Routes
 router.get("/", getCategories);
 router.post("/", upload.single("image"), createCategory);
 router.put("/:id", upload.single("image"), updateCategory);
