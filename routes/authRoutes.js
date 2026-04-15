@@ -1,4 +1,5 @@
 import express from "express";
+import { protect } from "../middleware/authMiddleware.js";
 import {
   registerUser,
   loginUser,
@@ -7,7 +8,8 @@ import {
   resetPassword,
   toggleStatus,
   updateProfile,
-  toggleVerification
+  toggleVerification,
+  getMe
 } from "../controllers/authController.js";
 
 
@@ -20,6 +22,7 @@ router.post("/login", loginUser);
 // Users management
 router.get("/users", getAllUsers);
 router.delete("/users/:id", deleteUser);
+router.get("/me", protect, getMe);
 router.post("/users/:id/reset-password", resetPassword);
 router.patch("/users/:id/toggle-status", toggleStatus);
 router.patch("/users/:id/toggle-verify", toggleVerification);

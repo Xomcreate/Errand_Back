@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 // ---------------------- REGISTER ----------------------
 export const registerUser = async (req, res, next) => {
@@ -33,24 +34,49 @@ export const loginUser = async (req, res, next) => {
   try {
     const { email = "", password = "" } = req.body;
 
-    if (!email || !password)
-      return res.status(400).json({ message: "Please provide email and password" });
+    if (!email || !password) {
+      return res.status(400).json({
+        message: "Please provide email and password",
+      });
+    }
 
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
-res.status(200).json({
-  success: true,
-  message: "Login successful",
-  role: user.role,
-  user: { 
-    id: user._id, 
-    name: user.name, 
-    email: user.email, 
-    phone: user.phone // <-- include this
-  },
+
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // 🔥 CREATE JWT TOKEN (THIS WAS MISSING BEFORE)
+    const token = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+
+      // ✅ IMPORTANT: NOW FRONTEND WILL RECEIVE TOKEN
+      token,
+
+      role: user.role,
+
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
     });
   } catch (error) {
     next(error);
@@ -115,22 +141,33 @@ export const toggleStatus = async (req, res, next) => {
 export const updateProfile = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, phone } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      id,
-      { name, phone },
-      { new: true, runValidators: true }
-    );
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // COMMON FIELDS
+    user.name = req.body.name ?? user.name;
+    user.phone = req.body.phone ?? user.phone;
+
+    // ✅ VENDOR ONLY FIELDS
+    if (user.role === "vendor") {
+      user.storeName = req.body.storeName ?? user.storeName;
+      user.address = req.body.address ?? user.address;
+      user.profileImage = req.body.profileImage ?? user.profileImage;
+
+      // IMPORTANT: avoid overwriting if not sent
+      if (req.body.businessHours) {
+        user.businessHours = req.body.businessHours;
+      }
+    }
+
+    const updatedUser = await user.save();
 
     res.status(200).json({
-      message: "Profile updated",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-      },
+      message: "Profile updated successfully",
+      user: updatedUser,
     });
   } catch (error) {
     next(error);
@@ -151,6 +188,21 @@ export const toggleVerification = async (req, res, next) => {
       message: `Vendor ${user.isVerified ? "verified" : "unverified"}`,
       isVerified: user.isVerified,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// GET LOGGED-IN USER (SELLER OR BUYER)
+export const getMe = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.status(200).json({ user });
   } catch (error) {
     next(error);
   }

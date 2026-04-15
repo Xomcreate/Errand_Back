@@ -14,8 +14,12 @@ import wishlistRoutes from "./routes/wishlistRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
 import cookieParser from "cookie-parser";
-import checkoutRoutes from "./routes/checkoutRoutes.js";
+// import checkoutRoutes from "./routes/checkoutRoutes.js";
+import orderRoutes from "./routes/OrderRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 import { errorHandler } from "./middleware/errorMiddleware.js"; // ✅ FIXED
+; // if you have it
+
 
 
 import path from "path";
@@ -49,9 +53,10 @@ app.use("/api/products", productRoutes);
 app.use("/api/categories",categoryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/newsletter", newsletterRoutes);
-app.use("/api/wishlist", wishlistRoutes);
-app.use("/api/checkout", checkoutRoutes);
 app.use("/api/referrals", referralRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/payments", paymentRoutes);
+
 
 app.use("/api/auth", authRoutes);
 
