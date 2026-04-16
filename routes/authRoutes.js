@@ -11,6 +11,7 @@ import {
   toggleVerification,
   getMe
 } from "../controllers/authController.js";
+import { upload } from "../middleware/upload.js";
 
 
 
@@ -26,7 +27,12 @@ router.get("/me", protect, getMe);
 router.post("/users/:id/reset-password", resetPassword);
 router.patch("/users/:id/toggle-status", toggleStatus);
 router.patch("/users/:id/toggle-verify", toggleVerification);
-router.put("/users/:id", updateProfile);
+router.put(
+  "/users/:id",
+  protect,
+  upload.single("profileImage"),
+  updateProfile
+);
 
 
 export default router;

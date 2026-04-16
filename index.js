@@ -13,6 +13,7 @@ import authRoutes from "./routes/authRoutes.js"; // ✅ FIXED
 import wishlistRoutes from "./routes/wishlistRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
+import vendorProductRoutes from "./routes/vendorProductRoutes.js";
 import cookieParser from "cookie-parser";
 // import checkoutRoutes from "./routes/checkoutRoutes.js";
 import orderRoutes from "./routes/OrderRoutes.js";
@@ -56,6 +57,7 @@ app.use("/api/newsletter", newsletterRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/vendor-products", vendorProductRoutes);
 
 
 app.use("/api/auth", authRoutes);

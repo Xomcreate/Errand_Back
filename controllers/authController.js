@@ -76,6 +76,7 @@ export const loginUser = async (req, res, next) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+         profileImage: user.profileImage,
       },
     });
   } catch (error) {
@@ -147,19 +148,25 @@ export const updateProfile = async (req, res, next) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // COMMON FIELDS
-    user.name = req.body.name ?? user.name;
-    user.phone = req.body.phone ?? user.phone;
+    // 🔥 FIX: prevent crash when req.body is undefined
+    const body = req.body || {};
 
-    // ✅ VENDOR ONLY FIELDS
+    user.name = body.name ?? user.name;
+    user.phone = body.phone ?? user.phone;
+
+    if (req.file) {
+      user.profileImage = `/uploads/${req.file.filename}`;
+    }
+
     if (user.role === "vendor") {
-      user.storeName = req.body.storeName ?? user.storeName;
-      user.address = req.body.address ?? user.address;
-      user.profileImage = req.body.profileImage ?? user.profileImage;
+      user.storeName = body.storeName ?? user.storeName;
+      user.address = body.address ?? user.address;
 
-      // IMPORTANT: avoid overwriting if not sent
-      if (req.body.businessHours) {
-        user.businessHours = req.body.businessHours;
+      if (body.businessHours) {
+        user.businessHours =
+          typeof body.businessHours === "string"
+            ? JSON.parse(body.businessHours)
+            : body.businessHours;
       }
     }
 
@@ -167,7 +174,13 @@ export const updateProfile = async (req, res, next) => {
 
     res.status(200).json({
       message: "Profile updated successfully",
-      user: updatedUser,
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+        profileImage: updatedUser.profileImage,
+      },
     });
   } catch (error) {
     next(error);
