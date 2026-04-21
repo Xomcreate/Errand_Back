@@ -9,6 +9,19 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true },
     phone: { type: String, required: true },
     address: { type: String, required: function () { return this.role === "vendor"; } },
+    // userSchema
+categories: {
+  type: [String], // 👈 array now
+  default: ["General"],
+  required: function () {
+    return this.role === "vendor";
+  },
+},
+
+description: {
+  type: String,
+  default: "",
+},
     password: { type: String, required: true, minlength: 8 },
     businessHours: {
   monday: { open: String, close: String },

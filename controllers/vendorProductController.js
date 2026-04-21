@@ -1,6 +1,6 @@
 import VendorProduct from "../models/VendorProduct.js";
 
-// CREATE PRODUCT
+// ================= CREATE PRODUCT =================
 export const createVendorProduct = async (req, res) => {
   try {
     const { name, category, price, stock } = req.body;
@@ -23,7 +23,7 @@ export const createVendorProduct = async (req, res) => {
   }
 };
 
-// GET VENDOR PRODUCTS
+// ================= GET LOGGED-IN VENDOR PRODUCTS =================
 export const getVendorProducts = async (req, res) => {
   try {
     const products = await VendorProduct.find({
@@ -39,7 +39,7 @@ export const getVendorProducts = async (req, res) => {
   }
 };
 
-// DELETE PRODUCT
+// ================= DELETE PRODUCT =================
 export const deleteVendorProduct = async (req, res) => {
   try {
     await VendorProduct.findByIdAndDelete(req.params.id);
@@ -47,6 +47,22 @@ export const deleteVendorProduct = async (req, res) => {
     res.json({
       success: true,
       message: "Vendor product deleted",
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ================= NEW: PUBLIC STORE PRODUCTS =================
+export const getVendorProductsByVendorId = async (req, res) => {
+  try {
+    const products = await VendorProduct.find({
+      vendorId: req.params.id,
+    });
+
+    res.json({
+      success: true,
+      products,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

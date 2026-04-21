@@ -5,13 +5,14 @@ import {
   createVendorProduct,
   getVendorProducts,
   deleteVendorProduct,
+  getVendorProductsByVendorId, // ✅ NEW
 } from "../controllers/vendorProductController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// IMAGE UPLOAD
+// ================= IMAGE UPLOAD =================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, "uploads/");
@@ -23,13 +24,21 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// CREATE PRODUCT
-router.post("/", protect, upload.single("image"), createVendorProduct);
+// ================= CREATE PRODUCT =================
+router.post(
+  "/",
+  protect,
+  upload.single("image"),
+  createVendorProduct
+);
 
-// GET VENDOR PRODUCTS
+// ================= GET LOGGED-IN VENDOR PRODUCTS =================
 router.get("/", protect, getVendorProducts);
 
-// DELETE PRODUCT
+// ================= GET PUBLIC STORE PRODUCTS (IMPORTANT FIX) =================
+router.get("/vendor/:id", getVendorProductsByVendorId);
+
+// ================= DELETE PRODUCT =================
 router.delete("/:id", protect, deleteVendorProduct);
 
 export default router;

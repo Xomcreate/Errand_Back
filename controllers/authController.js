@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 // ---------------------- REGISTER ----------------------
 export const registerUser = async (req, res, next) => {
   try {
-    const { role, name, storeName, email, phone, address, password, confirmPassword } = req.body;
+    const { role, name, storeName, email, phone, address,  categories, password, confirmPassword } = req.body;
 
     if (!password || password.length < 8)
       return res.status(400).json({ message: "Password must be at least 8 characters" });
@@ -17,7 +17,7 @@ export const registerUser = async (req, res, next) => {
     if (existingUser)
       return res.status(400).json({ message: "Email already registered" });
 
-    const user = await User.create({ role, name, storeName, email, phone, address, password });
+    const user = await User.create({ role, name, storeName, email, phone, address, categories: categories ? (Array.isArray(categories) ? categories : [categories]) : ["General"], password });
 
     res.status(201).json({
       success: true,
@@ -158,29 +158,32 @@ export const updateProfile = async (req, res, next) => {
       user.profileImage = `/uploads/${req.file.filename}`;
     }
 
-    if (user.role === "vendor") {
-      user.storeName = body.storeName ?? user.storeName;
-      user.address = body.address ?? user.address;
+   if (user.role === "vendor") {
+  user.storeName = body.storeName ?? user.storeName;
+  user.address = body.address ?? user.address;
 
-      if (body.businessHours) {
-        user.businessHours =
-          typeof body.businessHours === "string"
-            ? JSON.parse(body.businessHours)
-            : body.businessHours;
-      }
-    }
+  // ✅ ADD THIS LINE
+  user.description = body.description ?? user.description;
 
+  if (body.categories) {
+    user.categories =
+      typeof body.categories === "string"
+        ? JSON.parse(body.categories)
+        : body.categories;
+  }
+
+  if (body.businessHours) {
+    user.businessHours =
+      typeof body.businessHours === "string"
+        ? JSON.parse(body.businessHours)
+        : body.businessHours;
+  }
+}
     const updatedUser = await user.save();
 
     res.status(200).json({
       message: "Profile updated successfully",
-      user: {
-        id: updatedUser._id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        phone: updatedUser.phone,
-        profileImage: updatedUser.profileImage,
-      },
+     user: updatedUser
     });
   } catch (error) {
     next(error);
