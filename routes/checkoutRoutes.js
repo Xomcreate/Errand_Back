@@ -4,7 +4,6 @@ import { protect } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// POST /api/checkout
 router.post("/", protect, checkout);
 
 export default router;

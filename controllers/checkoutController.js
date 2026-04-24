@@ -1,54 +1,73 @@
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
+import VendorProduct from "../models/VendorProduct.js";
 
-// POST /api/checkout
 export const checkout = async (req, res) => {
   try {
-    const userId = req.user.id; // from auth middleware
+    const userId = req.user.id;
     const { items } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    // Fetch products from DB to get real prices
-    const productIds = items.map((i) => i.product);
+    const productIds = items.map((i) => i.productId);
 
-    const products = await Product.find({ _id: { $in: productIds } });
+    const [platformProducts, vendorProducts] = await Promise.all([
+      Product.find({ _id: { $in: productIds } }),
+      VendorProduct.find({ _id: { $in: productIds } }),
+    ]);
 
-    if (!products.length) {
-      return res.status(404).json({ message: "Products not found" });
+    const productMap = {};
+
+    platformProducts.forEach((p) => {
+      productMap[p._id.toString()] = p;
+    });
+
+    vendorProducts.forEach((p) => {
+      productMap[p._id.toString()] = p;
+    });
+
+    if (Object.keys(productMap).length === 0) {
+      return res.status(404).json({ message: "No products found" });
     }
 
-    // Calculate total
     let totalAmount = 0;
+    const orderItems = [];
 
-    const orderItems = items.map((item) => {
-      const product = products.find(
-        (p) => p._id.toString() === item.product
-      );
+    for (const item of items) {
+      const product = productMap[item.productId];
 
-      if (!product) return null;
+      if (!product) continue;
 
-      totalAmount += product.price * item.quantity;
+      const realPrice = product.price;
+      totalAmount += realPrice * item.quantity;
 
-      return {
-        product: product._id,
+      orderItems.push({
+        productId: item.productId,
         quantity: item.quantity,
-      };
-    }).filter(Boolean);
+        price: realPrice,
+        vendorId: item.vendorId || null,
+      });
+    }
 
-    // Create order
+    if (orderItems.length === 0) {
+      return res.status(404).json({ message: "No valid products found" });
+    }
+
     const order = await Order.create({
       user: userId,
       items: orderItems,
       totalAmount,
+      status: "pending",
+      paymentStatus: "pending",
     });
 
     return res.status(201).json({
-      message: "Order placed successfully",
+      message: "Order created successfully",
       order,
     });
+
   } catch (error) {
     console.error("Checkout error:", error);
     res.status(500).json({ message: "Server error" });

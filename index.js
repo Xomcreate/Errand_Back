@@ -17,6 +17,7 @@ import vendorProductRoutes from "./routes/vendorProductRoutes.js";
 import cookieParser from "cookie-parser";
 // import checkoutRoutes from "./routes/checkoutRoutes.js";
 import orderRoutes from "./routes/OrderRoutes.js";
+import vendorReviewRoutes from "./routes/vendorReviewRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import { errorHandler } from "./middleware/errorMiddleware.js"; // ✅ FIXED
 ; // if you have it
@@ -49,6 +50,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Routes
 app.use("/api/contacts", contactRoutes);
 app.use("/api/insider", insiderRoutes);
+app.use("/api/vendor-reviews", vendorReviewRoutes);
 app.use("/api/seller", sellerInquiryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/categories",categoryRoutes);
