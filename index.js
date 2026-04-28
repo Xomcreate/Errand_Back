@@ -19,6 +19,7 @@ import cookieParser from "cookie-parser";
 import orderRoutes from "./routes/OrderRoutes.js";
 import vendorReviewRoutes from "./routes/vendorReviewRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import jobRoutes from "./routes/jobRoutes.js";
 import { errorHandler } from "./middleware/errorMiddleware.js"; // ✅ FIXED
 ; // if you have it
 
@@ -60,6 +61,7 @@ app.use("/api/referrals", referralRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/vendor-products", vendorProductRoutes);
+app.use("/api/jobs", jobRoutes);
 
 
 app.use("/api/auth", authRoutes);

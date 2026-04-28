@@ -22,21 +22,14 @@ export const createOrder = async (req, res) => {
     ]);
 
     const productMap = {};
-
-    platformProducts.forEach((p) => {
-      productMap[p._id.toString()] = p;
-    });
-
-    vendorProducts.forEach((p) => {
-      productMap[p._id.toString()] = p;
-    });
+    platformProducts.forEach((p) => (productMap[p._id.toString()] = p));
+    vendorProducts.forEach((p) => (productMap[p._id.toString()] = p));
 
     let totalAmount = 0;
     const orderItems = [];
 
     for (const item of items) {
       const product = productMap[item.productId];
-
       if (!product) continue;
 
       const realPrice = product.price;
@@ -62,17 +55,60 @@ export const createOrder = async (req, res) => {
       paymentStatus: "pending",
     });
 
-    res.status(201).json({
-      success: true,
-      order,
-    });
-
+    res.status(201).json({ success: true, order });
   } catch (err) {
     console.error("Order error:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
+// =========================
+// SAVE DELIVERY INFO
+// =========================
+export const saveDeliveryInfo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      fullName,
+      phone,
+      country,
+      state,
+      city,
+      street,
+      landmark,
+    } = req.body;
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (String(order.user) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    order.deliveryInfo = {
+      fullName,
+      phone,
+      country,
+      state,
+      city,
+      street,
+      landmark,
+    };
+
+    await order.save();
+
+    return res.json({
+      success: true,
+      message: "Delivery info saved",
+      order,
+    });
+  } catch (err) {
+    console.error("SAVE DELIVERY ERROR:", err.message);
+    return res.status(500).json({ message: "Failed to save delivery info" });
+  }
+};
 // =========================
 // GET ALL ORDERS (admin)
 // =========================
@@ -84,7 +120,6 @@ export const getAllOrders = async (req, res) => {
 
     res.json({ success: true, orders });
   } catch (err) {
-    console.error("Get orders error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -94,29 +129,45 @@ export const getAllOrders = async (req, res) => {
 // =========================
 export const getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ user: req.user.id })
-      .sort({ createdAt: -1 });
+    const orders = await Order.find({ user: req.user.id }).sort({ createdAt: -1 });
 
-    res.json({ success: true, orders });
+    // Collect all productIds from all orders
+    const allProductIds = orders.flatMap(o => o.items.map(i => i.productId));
+
+    // Fetch from both models
+    const [platformProducts, vendorProducts] = await Promise.all([
+      Product.find({ _id: { $in: allProductIds } }).select("name price images"),
+      VendorProduct.find({ _id: { $in: allProductIds } }).select("name price images"),
+    ]);
+
+    // Build a lookup map
+    const productMap = {};
+    platformProducts.forEach(p => (productMap[p._id.toString()] = p));
+    vendorProducts.forEach(p => (productMap[p._id.toString()] = p));
+
+    // Attach product info to each order item
+    const enrichedOrders = orders.map(order => ({
+      ...order._doc,
+      items: order.items.map(item => ({
+        ...item._doc,
+        productId: productMap[item.productId?.toString()] || { name: "Product", price: item.price },
+      })),
+    }));
+
+    res.json({ success: true, orders: enrichedOrders });
   } catch (err) {
-    console.error("Get my orders error:", err);
     res.status(500).json({ message: err.message });
   }
 };
-
 // =========================
 // GET SINGLE ORDER
 // =========================
 export const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id)
-      .populate("user", "name email");
+    const order = await Order.findById(req.params.id).populate("user", "name email");
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // only owner or admin can view
     if (
       order.user._id.toString() !== req.user.id &&
       req.user.role !== "admin"
@@ -126,7 +177,6 @@ export const getOrderById = async (req, res) => {
 
     res.json({ success: true, order });
   } catch (err) {
-    console.error("Get order error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -144,13 +194,10 @@ export const updateOrderStatus = async (req, res) => {
       { new: true }
     );
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
     res.json({ success: true, order });
   } catch (err) {
-    console.error("Update order error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -166,7 +213,6 @@ export const getVendorOrders = async (req, res) => {
       "items.vendorId": vendorId,
     }).sort({ createdAt: -1 });
 
-    // filter items to only show this vendor's items
     const vendorOrders = orders.map((order) => ({
       ...order._doc,
       items: order.items.filter(
@@ -176,7 +222,6 @@ export const getVendorOrders = async (req, res) => {
 
     res.json({ success: true, orders: vendorOrders });
   } catch (err) {
-    console.error("Vendor orders error:", err);
     res.status(500).json({ message: err.message });
   }
 };
