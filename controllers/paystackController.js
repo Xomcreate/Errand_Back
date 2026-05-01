@@ -1,5 +1,6 @@
 import axios from "axios";
 import Order from "../models/Order.js";
+import Payment from "../models/Payment.js"; 
 
 const PAYSTACK_API = "https://api.paystack.co";
 
@@ -80,11 +81,7 @@ export const verifyPaystackPayment = async (req, res) => {
 
     const response = await axios.get(
       `${PAYSTACK_API}/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${getPaystackSecret()}`,
-        },
-      }
+      { headers: { Authorization: `Bearer ${getPaystackSecret()}` } }
     );
 
     const data = response.data.data;
@@ -94,17 +91,14 @@ export const verifyPaystackPayment = async (req, res) => {
     }
 
     const orderId = data.metadata?.orderId;
-
     if (!orderId) {
       return res.status(400).json({ message: "Order ID missing from metadata" });
     }
 
     const order = await Order.findById(orderId);
-
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const expectedAmount = Math.round(order.totalAmount * 100);
-
     if (data.amount !== expectedAmount) {
       return res.status(400).json({ message: "Amount mismatch" });
     }
@@ -113,12 +107,27 @@ export const verifyPaystackPayment = async (req, res) => {
       return res.status(400).json({ message: "Reference mismatch" });
     }
 
+    // ✅ Prevent double-processing
+    if (order.paymentStatus === "paid") {
+      return res.json({ success: true, order });
+    }
+
     order.paymentStatus = "paid";
     order.status = "processing";
     order.paymentMethod = "paystack";
     order.paymentReference = reference;
-
     await order.save();
+
+    // ✅ FIX: Create the Payment record so dashboard works
+    await Payment.create({
+      orderId: order._id,
+      userId: order.user,
+      reference,
+      amount: order.totalAmount,
+      status: "success",
+      type: "sale",
+      gateway: "paystack",
+    });
 
     return res.json({ success: true, order });
 

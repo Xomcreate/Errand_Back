@@ -213,6 +213,7 @@ export const getVendorOrders = async (req, res) => {
       "items.vendorId": vendorId,
     }).sort({ createdAt: -1 });
 
+    // Get vendor's items only
     const vendorOrders = orders.map((order) => ({
       ...order._doc,
       items: order.items.filter(
@@ -220,7 +221,33 @@ export const getVendorOrders = async (req, res) => {
       ),
     }));
 
-    res.json({ success: true, orders: vendorOrders });
+    // ✅ Collect all productIds from vendor's items
+    const allProductIds = vendorOrders.flatMap((o) =>
+      o.items.map((i) => i.productId)
+    );
+
+    // ✅ Fetch from both Product and VendorProduct models
+    const [platformProducts, vendorProducts] = await Promise.all([
+      Product.find({ _id: { $in: allProductIds } }).select("name images"),
+      VendorProduct.find({ _id: { $in: allProductIds } }).select("name images"),
+    ]);
+
+    // ✅ Build lookup map
+    const productMap = {};
+    platformProducts.forEach((p) => (productMap[p._id.toString()] = p));
+    vendorProducts.forEach((p) => (productMap[p._id.toString()] = p));
+
+    // ✅ Attach product name to each item
+    const enrichedOrders = vendorOrders.map((order) => ({
+      ...order,
+      items: order.items.map((item) => ({
+        ...item._doc,
+        productName: productMap[item.productId?.toString()]?.name || "Unknown Product",
+        productImage: productMap[item.productId?.toString()]?.images?.[0] || null,
+      })),
+    }));
+
+    res.json({ success: true, orders: enrichedOrders });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

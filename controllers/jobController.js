@@ -49,32 +49,21 @@ export const deleteJob = async (req, res) => {
 export const applyJob = async (req, res) => {
   try {
     const { jobId, fullName, email, phone, coverLetter } = req.body;
-
-    // ================= VALIDATION =================
+ 
     if (!jobId || !fullName || !email) {
       return res.status(400).json({ message: "Missing required fields" });
     }
-
+ 
     const job = await Job.findById(jobId);
-
-    if (!job) {
-      return res.status(404).json({ message: "Job not found" });
-    }
-
-    // ❌ FIX: prevent "no recipients defined"
+    if (!job) return res.status(404).json({ message: "Job not found" });
+ 
     if (!job.email) {
-      return res.status(400).json({
-        message: "Job owner email is missing",
-      });
+      return res.status(400).json({ message: "Job owner email is missing" });
     }
-
+ 
     // ================= CV FILE =================
-    const cvFile = req.file ? req.file.path : null;
-
-     const cvLink = cvFile
-      ? `http://localhost:5000/${cvFile.split("\\").join("/")}`
-      : null;
-
+    const cvFile = req.file || null;
+ 
     // ================= SAVE APPLICATION =================
     await Application.create({
       jobId,
@@ -82,9 +71,9 @@ export const applyJob = async (req, res) => {
       email,
       phone,
       coverLetter,
-      cvFile,
+      cvFile: cvFile ? cvFile.path : null,
     });
-
+ 
     // ================= EMAIL SETUP =================
     const transporter = nodemailer.createTransport({
       service: "gmail",
@@ -93,56 +82,51 @@ export const applyJob = async (req, res) => {
         pass: process.env.GMAIL_APP_PASSWORD,
       },
     });
-
+ 
+    // ✅ Attach the actual file to the email — works locally AND in production
+    const attachments = cvFile
+      ? [{ filename: cvFile.originalname, path: cvFile.path }]
+      : [];
+ 
     // ================= EMAIL TO EMPLOYER =================
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to: job.email,
       subject: `New Application - ${job.title}`,
+      attachments,
       html: `
         <h2>New Job Application</h2>
-
         <p><b>Job:</b> ${job.title}</p>
         <p><b>Name:</b> ${fullName}</p>
         <p><b>Email:</b> ${email}</p>
         <p><b>Phone:</b> ${phone || "N/A"}</p>
         <p><b>Cover Letter:</b> ${coverLetter || "N/A"}</p>
-
-       
-        <p>
-          CV:
-          ${
-            cvLink
-              ? `<a href="${cvLink}" target="_blank">Open CV</a>`
-              : "No CV uploaded"
-          }
-        </p>
+        <p>${cvFile ? "✅ CV is attached to this email." : "No CV uploaded."}</p>
       `,
     });
-
-    // ================= EMAIL TO YOU =================
+ 
+    // ================= EMAIL TO YOURSELF =================
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to: process.env.GMAIL_USER,
       subject: "New Job Application Alert",
+      attachments,
       html: `
         <h3>New Applicant</h3>
         <p><b>Name:</b> ${fullName}</p>
         <p><b>Job:</b> ${job.title}</p>
-        <p>
-          CV: <a href="${cvLink}" target="_blank">Open CV</a>
-        </p>
+        <p>${cvFile ? "✅ CV is attached to this email." : "No CV uploaded."}</p>
       `,
     });
-
-    // ================= UPDATE JOB COUNT =================
+ 
+    // ================= UPDATE APPLICANT COUNT =================
     job.applicants += 1;
     await job.save();
-
+ 
     res.json({ message: "Application submitted successfully" });
-
   } catch (err) {
     console.error("Apply job error:", err);
     res.status(500).json({ message: err.message });
   }
 };
+ 

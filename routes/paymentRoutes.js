@@ -1,13 +1,15 @@
-import express from "express";
-import { protect } from "../middleware/authMiddleware.js";
-import {
-  initPaystackPayment,
-  verifyPaystackPayment,
-} from "../controllers/paystackController.js";
+// routes/paymentRoutes.js
+import express from "express"; // ✅ this was missing
+import { protect, admin } from "../middleware/authMiddleware.js";
+import { initPaystackPayment, verifyPaystackPayment } from "../controllers/paystackController.js";
+import { getAllPayments, refundPayment } from "../controllers/paymentController.js";
 
 const router = express.Router();
 
 router.post("/paystack", protect, initPaystackPayment);
 router.get("/paystack/verify/:reference", protect, verifyPaystackPayment);
+
+router.get("/", protect, admin, getAllPayments);
+router.post("/:id/refund", protect, admin, refundPayment);
 
 export default router;

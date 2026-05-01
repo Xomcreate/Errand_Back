@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
-    role: { type: String, enum: ["buyer", "vendor"], required: true },
+    role: { type: String, enum: ["buyer", "vendor", "admin"], required: true },
     name: { type: String, required: true, trim: true },
     storeName: { type: String, required: function () { return this.role === "vendor"; } },
     email: { type: String, required: true, unique: true, lowercase: true },
@@ -16,6 +16,13 @@ categories: {
   required: function () {
     return this.role === "vendor";
   },
+},
+
+bankDetails: {
+  accountNumber: { type: String, default: "" },
+  bankCode: { type: String, default: "" },
+  accountName: { type: String, default: "" },
+  recipientCode: { type: String, default: "" },
 },
 
 description: {

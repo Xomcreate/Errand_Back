@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import axios from "axios";
 
 // ---------------------- REGISTER ----------------------
 export const registerUser = async (req, res, next) => {
@@ -221,5 +222,112 @@ export const getMe = async (req, res, next) => {
     res.status(200).json({ user });
   } catch (error) {
     next(error);
+  }
+};
+
+
+
+const isTestMode = process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test");
+
+// VERIFY BANK ACCOUNT
+export const verifyBankAccount = async (req, res, next) => {
+  try {
+    const { accountNumber, bankCode } = req.query;
+
+    if (!accountNumber || !bankCode) {
+      return res.status(400).json({ message: "Account number and bank code are required" });
+    }
+
+    // ✅ TEST MODE: skip real verification, return dummy name
+    if (isTestMode) {
+      return res.json({
+        success: true,
+        accountName: "TEST ACCOUNT (Live mode will verify real name)",
+      });
+    }
+
+    // LIVE MODE: real Paystack verification
+    const response = await axios.get(
+      `https://api.paystack.co/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
+      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    );
+
+    if (response.data.status) {
+      res.json({ success: true, accountName: response.data.data.account_name });
+    } else {
+      res.status(400).json({ success: false, message: "Account not found" });
+    }
+
+  } catch (err) {
+    res.status(400).json({ success: false, message: "Could not verify account" });
+  }
+};
+
+// SAVE BANK DETAILS
+export const saveBankDetails = async (req, res, next) => {
+  try {
+    const { accountNumber, bankCode } = req.body;
+
+    if (!accountNumber || !bankCode) {
+      return res.status(400).json({ message: "Account number and bank are required" });
+    }
+
+    let accountName = "TEST ACCOUNT";
+    let recipientCode = `TEST_RECIPIENT_${Date.now()}`;
+
+    if (isTestMode) {
+      // ✅ TEST MODE: skip Paystack calls, save directly
+      console.log("⚠ Test mode: skipping Paystack verification");
+    } else {
+      // LIVE MODE: verify and create recipient on Paystack
+      const verify = await axios.get(
+        `https://api.paystack.co/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
+        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+      );
+
+      if (!verify.data.status) {
+        return res.status(400).json({ message: "Could not verify account" });
+      }
+
+      accountName = verify.data.data.account_name;
+
+      const recipient = await axios.post(
+        "https://api.paystack.co/transferrecipient",
+        {
+          type: "nuban",
+          name: accountName,
+          account_number: accountNumber,
+          bank_code: bankCode,
+          currency: "NGN",
+        },
+        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+      );
+
+      recipientCode = recipient.data.data.recipient_code;
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { bankDetails: { accountNumber, bankCode, accountName, recipientCode } },
+      { new: true }
+    ).select("-password");
+
+    res.json({ success: true, message: "Bank details saved", bankDetails: user.bankDetails });
+
+  } catch (err) {
+    console.error("BANK DETAILS ERROR:", err.response?.data || err.message);
+    res.status(500).json({ message: "Failed to save bank details" });
+  }
+};
+
+// GET BANKS LIST
+export const getBanksList = async (req, res, next) => {
+  try {
+    const response = await axios.get("https://api.paystack.co/bank?currency=NGN", {
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+    });
+    res.json({ success: true, banks: response.data.data });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch banks" });
   }
 };

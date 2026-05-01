@@ -9,7 +9,10 @@ import {
   toggleStatus,
   updateProfile,
   toggleVerification,
-  getMe
+  getMe,
+  saveBankDetails,
+  getBanksList,
+  verifyBankAccount
 } from "../controllers/authController.js";
 import { upload } from "../middleware/upload.js";
 
@@ -22,6 +25,9 @@ router.post("/login", loginUser);
 
 // Users management
 router.get("/users", getAllUsers);
+router.get("/banks", protect, getBanksList);
+router.post("/bank-details", protect, saveBankDetails);
+router.get("/verify-account", protect, verifyBankAccount);
 router.delete("/users/:id", deleteUser);
 router.get("/me", protect, getMe);
 router.post("/users/:id/reset-password", resetPassword);
