@@ -136,3 +136,35 @@ export const verifyPaystackPayment = async (req, res) => {
     return res.status(500).json({ message: "Verification failed" });
   }
 };
+
+
+// paystackController.js — add at the bottom
+export const verifyBankAccount = async (req, res) => {
+  try {
+    const { account_number, bank_code } = req.query;
+
+    if (!account_number || !bank_code) {
+      return res.status(400).json({ message: "account_number and bank_code are required" });
+    }
+
+    const { data } = await axios.get(
+      `${PAYSTACK_API}/bank/resolve?account_number=${account_number}&bank_code=${bank_code}`,
+      {
+        headers: {
+          Authorization: `Bearer ${getPaystackSecret()}`,  // ✅ works here
+        },
+      }
+    );
+
+    return res.json({
+      account_name: data.data.account_name,
+      account_number: data.data.account_number,
+    });
+
+  } catch (err) {
+    console.error("VERIFY ACCOUNT ERROR:", err.response?.data || err.message);
+    return res.status(400).json({
+      message: err.response?.data?.message || "Could not verify account. Check number and bank.",
+    });
+  }
+};
