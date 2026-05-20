@@ -1,16 +1,43 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
-const referralSchema = mongoose.Schema(
-  {
-    referrer: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    refereeEmail: { type: String, required: true },
-    status: { type: String, enum: ["Clicked", "Pending Payout", "Converted"], default: "Clicked" },
-    reward: { type: Number, default: 0 },
-    payoutProcessed: { type: Boolean, default: false },
-    date: { type: Date, default: Date.now },
+const referralSchema = new mongoose.Schema({
+  referrerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
   },
-  { timestamps: true }
-);
 
-const Referral = mongoose.model("Referral", referralSchema);
-export default Referral;
+  refereeId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+  },
+
+  refereeEmail: {
+    type: String,
+    required: true,
+  },
+
+  orderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Order",
+  },
+
+  reward: {
+    type: Number,
+    default: 0,
+  },
+
+  status: {
+    type: String,
+    enum: ["Clicked", "Converted", "Pending Payout", "Paid"],
+    default: "Clicked",
+  },
+
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+module.exports = mongoose.model("Referral", referralSchema);

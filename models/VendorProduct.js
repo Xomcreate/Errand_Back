@@ -3,38 +3,37 @@ import mongoose from "mongoose";
 const vendorProductSchema = new mongoose.Schema(
   {
     vendorId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type:     mongoose.Schema.Types.ObjectId,
+      ref:      "User",
       required: true,
     },
-
     name: {
-      type: String,
+      type:     String,
       required: true,
     },
-
     category: {
-      type: String,
+      type:     String,
       required: true,
     },
-
     price: {
-      type: Number,
+      type:     Number,
       required: true,
     },
-
     stock: {
-      type: Number,
+      type:    Number,
       default: 0,
     },
-
     image: {
       type: String,
     },
-
     published: {
-      type: Boolean,
+      type:    Boolean,
       default: true,
+    },
+    // Reflects vendor's verified status at time of listing
+    isVerifiedListing: {
+      type:    Boolean,
+      default: false,
     },
   },
   { timestamps: true }

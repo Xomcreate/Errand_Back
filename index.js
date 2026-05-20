@@ -14,11 +14,13 @@ import wishlistRoutes from "./routes/wishlistRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
 import vendorProductRoutes from "./routes/vendorProductRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
 import cookieParser from "cookie-parser";
 // import checkoutRoutes from "./routes/checkoutRoutes.js";
 import orderRoutes from "./routes/OrderRoutes.js";
 import vendorReviewRoutes from "./routes/vendorReviewRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import vendorPlanRoutes from "./routes/vendorPlanRoutes.js";
 import jobRoutes from "./routes/jobRoutes.js";
 import { errorHandler } from "./middleware/errorMiddleware.js"; // ✅ FIXED
 ; // if you have it
@@ -62,6 +64,8 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/vendor-products", vendorProductRoutes);
 app.use("/api/jobs", jobRoutes);
+app.use("/api/vendor-plan", vendorPlanRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 
 app.use("/api/auth", authRoutes);

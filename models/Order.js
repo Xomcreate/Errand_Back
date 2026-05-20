@@ -3,8 +3,8 @@ import mongoose from "mongoose";
 const orderSchema = new mongoose.Schema(
   {
     user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type:     mongoose.Schema.Types.ObjectId,
+      ref:      "User",
       required: true,
     },
 
@@ -14,19 +14,23 @@ const orderSchema = new mongoose.Schema(
         quantity:  { type: Number, required: true },
         price:     { type: Number, required: true },
         vendorId:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        // Denormalized at order time so reports are accurate even if product is later deleted
+        productName: { type: String, default: null },
+        storeName:   { type: String, default: null },
+        vendorName:  { type: String, default: null },
       },
     ],
 
     totalAmount:      { type: Number, required: true },
 
     status: {
-      type: String,
-      enum: ["pending", "paid", "processing", "shipped", "delivered", "failed", "cancelled"],
+      type:    String,
+      enum:    ["pending", "paid", "processing", "shipped", "delivered", "failed", "cancelled"],
       default: "pending",
     },
 
     paymentStatus:    { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
-    paymentMethod:    { type: String, enum: ["paystack"], default: null },
+    paymentMethod:    { type: String, default: null },
     paymentReference: { type: String, default: null },
 
     deliveryInfo: {
@@ -39,61 +43,66 @@ const orderSchema = new mongoose.Schema(
       landmark: String,
     },
 
-    // ── SHIPPING PROOF (top-level — backward compat, first ship photo) ────────
     vendorShipPhoto:      { type: String, default: null },
     customerReceivePhoto: { type: String, default: null },
 
-    // ── PER-PARTY SHIPMENT TRACKING ───────────────────────────────────────────
-    // partyKey: "__platform__" for platform items, or vendorId string for vendor items
     partyShipments: [
       {
         partyKey:  { type: String, required: true },
         vendorId:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         photo:     { type: String, default: null },
-        shippedAt: { type: Date, default: null },
+        shippedAt: { type: Date,   default: null },
       },
     ],
 
-    // ── PER-PARTY DELIVERY CONFIRMATION ──────────────────────────────────────
-    // One record per party once the customer confirms receipt of THAT party's items.
-    // partyKey: "__platform__" | vendorId string
     partyConfirmations: [
       {
         partyKey:    { type: String, required: true },
         vendorId:    { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
-        photo:       { type: String, default: null }, // customer's received photo for this party
-        confirmedAt: { type: Date, default: null },
+        photo:       { type: String, default: null },
+        confirmedAt: { type: Date,   default: null },
       },
     ],
 
-    // ── PER-PARTY PAYOUT TRACKING ─────────────────────────────────────────────
     partyPayouts: [
       {
-        partyKey:      { type: String, required: true },
-        vendorId:      { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
-        paidAt:        { type: Date, default: null },
-        note:          { type: String, default: null },
-        accountNumber: { type: String, default: null }, // platform payouts only
+        partyKey:         { type: String, required: true },
+        vendorId:         { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        paidAt:           { type: Date,   default: null },
+        note:             { type: String, default: null },
+
+        // Bank details stored at payout time (platform payouts entered manually by admin)
+        accountNumber:    { type: String, default: null },
+        accountName:      { type: String, default: null },   // ← FIX: was missing from schema
+        bankCode:         { type: String, default: null },   // ← FIX: was missing from schema
+        bankName:         { type: String, default: null },   // ← FIX: was missing from schema
+
+        // Commission breakdown snapshot — stored permanently at payout time
+        vendorPlan:       { type: String, default: "basic" },
+        baseRate:         { type: Number, default: 0 },
+        planMultiplier:   { type: Number, default: 1 },
+        effectiveRate:    { type: Number, default: 0 },
+        gross:            { type: Number, default: 0 },
+        commissionAmount: { type: Number, default: 0 },
+        net:              { type: Number, default: 0 },
       },
     ],
 
-    // ── ESCROW ────────────────────────────────────────────────────────────────
     escrowStatus: {
-      type: String,
-      enum: ["holding", "pending_release", "released", "refunded"],
+      type:    String,
+      enum:    ["holding", "pending_release", "released", "refunded"],
       default: "holding",
     },
 
-    // ── DISPUTE ───────────────────────────────────────────────────────────────
     dispute: {
       raised:   { type: Boolean, default: false },
       reason:   { type: String,  default: null  },
       resolved: { type: Boolean, default: false },
     },
 
-    vendorShippedAt:     { type: Date, default: null },
-    customerConfirmedAt: { type: Date, default: null }, // set when ALL parties confirmed
-    vendorPaidAt:        { type: Date, default: null },
+    vendorShippedAt:     { type: Date,   default: null },
+    customerConfirmedAt: { type: Date,   default: null },
+    vendorPaidAt:        { type: Date,   default: null },
     payoutNote:          { type: String, default: null },
   },
   { timestamps: true }

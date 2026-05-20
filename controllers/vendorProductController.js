@@ -1,39 +1,114 @@
 import VendorProduct from "../models/VendorProduct.js";
+import VendorPlan from "../models/VendorPlan.js";
+import { PLAN_CONFIG } from "../config/commissionConfig.js";
+
+// ── Helper: resolve effective plan (handles expiry) ──────────────────────────
+const resolveEffectivePlan = async (vendorPlan, vendorId) => {
+  const isExpired =
+    vendorPlan.plan !== "basic" &&
+    vendorPlan.planExpiresAt &&
+    new Date() > new Date(vendorPlan.planExpiresAt);
+
+  if (isExpired) {
+    // Reset in DB so all endpoints agree going forward
+    const resetPlan = await VendorPlan.findOneAndUpdate(
+      { vendorId },
+      {
+        plan:         "basic",
+        isVerified:   false,
+        productLimit: PLAN_CONFIG.basic.productLimit,
+      },
+      { new: true }
+    );
+    return resetPlan;
+  }
+
+  return vendorPlan;
+};
 
 // ================= CREATE PRODUCT =================
 export const createVendorProduct = async (req, res) => {
   try {
     const { name, category, price, stock } = req.body;
+    const vendorId = req.user.id;
 
+    if (!name || !category || !price) {
+      return res.status(400).json({ message: "Name, category and price are required." });
+    }
+
+    // 1. Get or create vendor plan
+    let vendorPlan = await VendorPlan.findOne({ vendorId });
+    if (!vendorPlan) {
+      const config = PLAN_CONFIG.basic;
+      vendorPlan = await VendorPlan.create({
+        vendorId,
+        plan:         "basic",
+        isVerified:   config.isVerified,
+        productLimit: config.productLimit,
+      });
+    }
+
+    // 2. Resolve effective plan — resets DB if expired
+    vendorPlan = await resolveEffectivePlan(vendorPlan, vendorId);
+
+    const effectiveLimit = vendorPlan.productLimit;
+
+    // 3. Count existing products
+    const productCount = await VendorProduct.countDocuments({ vendorId });
+
+    // 4. Block if limit reached
+    if (productCount >= effectiveLimit) {
+      return res.status(403).json({
+        success:      false,
+        limitReached: true,
+        currentPlan:  vendorPlan.plan,
+        limit:        effectiveLimit,
+        message: `You've used all ${effectiveLimit} product slots on your ${vendorPlan.plan} plan. Upgrade to post more.`,
+      });
+    }
+
+    // 5. Create product — inherit isVerified from current (effective) plan
     const product = await VendorProduct.create({
-      vendorId: req.user._id,
+      vendorId,
       name,
       category,
       price,
-      stock,
-      image: req.file ? `/uploads/${req.file.filename}` : "",
+      stock:             stock || 0,
+      image:             req.file ? `/uploads/${req.file.filename}` : "",
+      isVerifiedListing: vendorPlan.isVerified,
     });
 
-    res.status(201).json({
-      success: true,
-      product,
-    });
+    res.status(201).json({ success: true, product });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
 // ================= GET LOGGED-IN VENDOR PRODUCTS =================
+// Returns both products AND the resolved plan so the frontend always has
+// the real current limit without a separate /vendor-plan/my round-trip.
 export const getVendorProducts = async (req, res) => {
   try {
-    const products = await VendorProduct.find({
-      vendorId: req.user._id,
-    });
+    const vendorId = req.user.id;
 
-    res.json({
-      success: true,
-      products,
-    });
+    const products = await VendorProduct.find({ vendorId }).sort({ createdAt: -1 });
+
+    // Get or create plan
+    let vendorPlan = await VendorPlan.findOne({ vendorId });
+    if (!vendorPlan) {
+      const config = PLAN_CONFIG.basic;
+      vendorPlan = await VendorPlan.create({
+        vendorId,
+        plan:         "basic",
+        isVerified:   config.isVerified,
+        productLimit: config.productLimit,
+      });
+    }
+
+    // Resolve expiry — resets DB if needed and returns the effective plan
+    vendorPlan = await resolveEffectivePlan(vendorPlan, vendorId);
+
+    res.json({ success: true, products, plan: vendorPlan });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -42,28 +117,30 @@ export const getVendorProducts = async (req, res) => {
 // ================= DELETE PRODUCT =================
 export const deleteVendorProduct = async (req, res) => {
   try {
-    await VendorProduct.findByIdAndDelete(req.params.id);
-
-    res.json({
-      success: true,
-      message: "Vendor product deleted",
+    const product = await VendorProduct.findOne({
+      _id:      req.params.id,
+      vendorId: req.user.id,
     });
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found or not yours." });
+    }
+
+    await product.deleteOne();
+    res.json({ success: true, message: "Product deleted." });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// ================= NEW: PUBLIC STORE PRODUCTS =================
+// ================= PUBLIC STORE PRODUCTS =================
 export const getVendorProductsByVendorId = async (req, res) => {
   try {
     const products = await VendorProduct.find({
-      vendorId: req.params.id,
-    });
-
-    res.json({
-      success: true,
-      products,
-    });
+      vendorId:  req.params.id,
+      published: true,
+    }).sort({ createdAt: -1 });
+    res.json({ success: true, products });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
