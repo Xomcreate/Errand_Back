@@ -19,5 +19,6 @@ router.post("/", upload.single("photo"), reviewController.createReview);
 router.get("/admin", reviewController.getAllReviews);
 router.patch("/approve/:id", reviewController.approveReview);
 router.patch("/disapprove/:id", reviewController.disapproveReview);
+router.delete("/:id", reviewController.deleteReview);
 
 module.exports = router;

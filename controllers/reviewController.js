@@ -1,5 +1,6 @@
 const Review = require("../models/Review");
 const { uploadToCloudinary } = require("../utils/uploadToCloudinary");
+const cloudinary = require("../config/cloudinary");
 
 // PUBLIC → approved only
 exports.getReviews = async (req, res) => {
@@ -31,12 +32,14 @@ exports.createReview = async (req, res) => {
 
   try {
     let photoUrl = null;
+    let photoPublicId = null;
 
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer, {
         folder: "reviews",
       });
       photoUrl = result.secure_url;
+      photoPublicId = result.public_id; // needed later to delete the image from Cloudinary
     }
 
     const review = new Review({
@@ -44,6 +47,7 @@ exports.createReview = async (req, res) => {
       rating,
       comment,
       photo: photoUrl, // full Cloudinary URL, or null if no photo uploaded
+      photoPublicId, // Cloudinary asset id, or null — used for cleanup on delete
       approved: false, // ALWAYS false on submit
     });
 
@@ -77,6 +81,32 @@ exports.disapproveReview = async (req, res) => {
       { new: true }
     );
     res.json(review);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ADMIN delete
+exports.deleteReview = async (req, res) => {
+  try {
+    const review = await Review.findById(req.params.id);
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" });
+    }
+
+    // Clean up the Cloudinary image too, if one was attached.
+    // Older reviews created before photoPublicId existed won't have this — skip safely.
+    if (review.photoPublicId) {
+      try {
+        await cloudinary.uploader.destroy(review.photoPublicId);
+      } catch (cloudErr) {
+        console.error("Cloudinary cleanup failed:", cloudErr.message);
+        // don't block the DB delete just because Cloudinary cleanup failed
+      }
+    }
+
+    await Review.findByIdAndDelete(req.params.id);
+    res.json({ message: "Review deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
