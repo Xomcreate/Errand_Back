@@ -1,16 +1,7 @@
 import multer from "multer";
 import path from "path";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
-import cloudinary from "../config/cloudinary.js"; // adjust path if your config file lives elsewhere
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: "uploads",
-    allowed_formats: ["jpg", "jpeg", "png", "pdf", "doc", "docx"],
-    resource_type: "auto", // required so pdf/doc files upload correctly, not just images
-  },
-});
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
   const allowedExt = /pdf|doc|docx|jpeg|jpg|png/;

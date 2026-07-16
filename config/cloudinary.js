@@ -1,4 +1,4 @@
-import "dotenv/config"; // loads .env immediately, independent of index.js's dotenv.config() timing
+import "dotenv/config";
 import { v2 as cloudinary } from "cloudinary";
 
 cloudinary.config({
@@ -7,10 +7,13 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-console.log("Cloudinary config check:", {
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY ? "✅ loaded" : "❌ missing",
-  api_secret: process.env.CLOUDINARY_API_SECRET ? "✅ loaded" : "❌ missing",
+// Ping Cloudinary to confirm the connection/credentials actually work
+cloudinary.api.ping((error, result) => {
+  if (error) {
+    console.error("❌ Cloudinary connection failed:", error.message);
+  } else {
+    console.log("✅ Cloudinary connected:", result);
+  }
 });
 
 export default cloudinary;
