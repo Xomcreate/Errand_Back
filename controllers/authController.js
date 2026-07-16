@@ -3,10 +3,19 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER — generate JWT (same config as login)
+// ─────────────────────────────────────────────────────────────────────────────
+const generateToken = (id, role) =>
+  jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+
 // ---------------------- REGISTER ----------------------
 export const registerUser = async (req, res, next) => {
   try {
-    const { role, name, storeName, email, phone, address,  categories, password, confirmPassword } = req.body;
+    const {
+      role, name, storeName, email, phone,
+      address, categories, password, confirmPassword,
+    } = req.body;
 
     if (!password || password.length < 8)
       return res.status(400).json({ message: "Password must be at least 8 characters" });
@@ -18,12 +27,35 @@ export const registerUser = async (req, res, next) => {
     if (existingUser)
       return res.status(400).json({ message: "Email already registered" });
 
-    const user = await User.create({ role, name, storeName, email, phone, address, categories: categories ? (Array.isArray(categories) ? categories : [categories]) : ["General"], password });
+    const user = await User.create({
+      role,
+      name,
+      storeName,
+      email,
+      phone,
+      address,
+      categories: categories
+        ? Array.isArray(categories) ? categories : [categories]
+        : ["General"],
+      password,
+    });
+
+    // FIX — return a token on register so the frontend can immediately call
+    // POST /referrals/register (which requires auth) without a separate login.
+    // Without this token, referral documents are never created and wallets
+    // are never funded.
+    const token = generateToken(user._id, user.role);
 
     res.status(201).json({
       success: true,
       message: "Registration successful",
-      user: { id: user._id, role: user.role, name: user.name, email: user.email },
+      token,
+      user: {
+        id:    user._id,
+        role:  user.role,
+        name:  user.name,
+        email: user.email,
+      },
     });
   } catch (error) {
     next(error);
@@ -35,49 +67,30 @@ export const loginUser = async (req, res, next) => {
   try {
     const { email = "", password = "" } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({
-        message: "Please provide email and password",
-      });
-    }
+    if (!email || !password)
+      return res.status(400).json({ message: "Please provide email and password" });
 
     const user = await User.findOne({ email: email.toLowerCase() });
-
-    if (!user) {
+    if (!user)
       return res.status(401).json({ message: "Invalid credentials" });
-    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
+    if (!isMatch)
       return res.status(401).json({ message: "Invalid credentials" });
-    }
 
-    // 🔥 CREATE JWT TOKEN (THIS WAS MISSING BEFORE)
-    const token = jwt.sign(
-      {
-        id: user._id,
-        role: user.role,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = generateToken(user._id, user.role);
 
     return res.status(200).json({
       success: true,
       message: "Login successful",
-
-      // ✅ IMPORTANT: NOW FRONTEND WILL RECEIVE TOKEN
       token,
-
       role: user.role,
-
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-         profileImage: user.profileImage,
+        id:           user._id,
+        name:         user.name,
+        email:        user.email,
+        phone:        user.phone,
+        profileImage: user.profileImage,
       },
     });
   } catch (error) {
@@ -110,13 +123,9 @@ export const deleteUser = async (req, res, next) => {
 export const resetPassword = async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    const newPassword = Math.random().toString(36).slice(-8); // generate random 8-char password
+    const newPassword    = Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(newPassword, 12);
-
     await User.findByIdAndUpdate(id, { password: hashedPassword });
-
-    // In real apps, send email. Here we just return for testing.
     res.status(200).json({ message: "Password reset successfully", newPassword });
   } catch (error) {
     next(error);
@@ -130,71 +139,62 @@ export const toggleStatus = async (req, res, next) => {
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const newStatus = user.status === "Active" ? "Blocked" : "Active";
-    user.status = newStatus;
+    user.status = user.status === "Active" ? "Blocked" : "Active";
     await user.save();
 
-    res.status(200).json({ message: `User status updated to ${newStatus}`, status: newStatus });
+    res.status(200).json({ message: `User status updated to ${user.status}`, status: user.status });
   } catch (error) {
     next(error);
   }
 };
 
+// ---------------------- UPDATE PROFILE ----------------------
 export const updateProfile = async (req, res, next) => {
   try {
     const { id } = req.params;
-
     const user = await User.findById(id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // 🔥 FIX: prevent crash when req.body is undefined
     const body = req.body || {};
 
-    user.name = body.name ?? user.name;
+    user.name  = body.name  ?? user.name;
     user.phone = body.phone ?? user.phone;
 
     if (req.file) {
       user.profileImage = `/uploads/${req.file.filename}`;
     }
 
-   if (user.role === "vendor") {
-  user.storeName = body.storeName ?? user.storeName;
-  user.address = body.address ?? user.address;
+    if (user.role === "vendor") {
+      user.storeName   = body.storeName   ?? user.storeName;
+      user.address     = body.address     ?? user.address;
+      user.description = body.description ?? user.description;
 
-  // ✅ ADD THIS LINE
-  user.description = body.description ?? user.description;
+      if (body.categories) {
+        user.categories =
+          typeof body.categories === "string"
+            ? JSON.parse(body.categories)
+            : body.categories;
+      }
 
-  if (body.categories) {
-    user.categories =
-      typeof body.categories === "string"
-        ? JSON.parse(body.categories)
-        : body.categories;
-  }
+      if (body.businessHours) {
+        user.businessHours =
+          typeof body.businessHours === "string"
+            ? JSON.parse(body.businessHours)
+            : body.businessHours;
+      }
+    }
 
-  if (body.businessHours) {
-    user.businessHours =
-      typeof body.businessHours === "string"
-        ? JSON.parse(body.businessHours)
-        : body.businessHours;
-  }
-}
     const updatedUser = await user.save();
-
-    res.status(200).json({
-      message: "Profile updated successfully",
-     user: updatedUser
-    });
+    res.status(200).json({ message: "Profile updated successfully", user: updatedUser });
   } catch (error) {
     next(error);
   }
 };
 
+// ---------------------- TOGGLE VERIFICATION ----------------------
 export const toggleVerification = async (req, res, next) => {
   try {
     const { id } = req.params;
-
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -202,7 +202,7 @@ export const toggleVerification = async (req, res, next) => {
     await user.save();
 
     res.status(200).json({
-      message: `Vendor ${user.isVerified ? "verified" : "unverified"}`,
+      message:    `Vendor ${user.isVerified ? "verified" : "unverified"}`,
       isVerified: user.isVerified,
     });
   } catch (error) {
@@ -210,43 +210,35 @@ export const toggleVerification = async (req, res, next) => {
   }
 };
 
-// GET LOGGED-IN USER (SELLER OR BUYER)
+// ---------------------- GET ME ----------------------
 export const getMe = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.status(200).json({ user });
   } catch (error) {
     next(error);
   }
 };
 
-
-
+// ─────────────────────────────────────────────────────────────────────────────
 const isTestMode = process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test");
 
-// VERIFY BANK ACCOUNT
+// ---------------------- VERIFY BANK ACCOUNT ----------------------
 export const verifyBankAccount = async (req, res, next) => {
   try {
     const { accountNumber, bankCode } = req.query;
 
-    if (!accountNumber || !bankCode) {
+    if (!accountNumber || !bankCode)
       return res.status(400).json({ message: "Account number and bank code are required" });
-    }
 
-    // ✅ TEST MODE: skip real verification, return dummy name
     if (isTestMode) {
       return res.json({
-        success: true,
+        success:     true,
         accountName: "TEST ACCOUNT (Live mode will verify real name)",
       });
     }
 
-    // LIVE MODE: real Paystack verification
     const response = await axios.get(
       `https://api.paystack.co/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
       { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
@@ -257,48 +249,43 @@ export const verifyBankAccount = async (req, res, next) => {
     } else {
       res.status(400).json({ success: false, message: "Account not found" });
     }
-
   } catch (err) {
     res.status(400).json({ success: false, message: "Could not verify account" });
   }
 };
 
-// SAVE BANK DETAILS
+// ---------------------- SAVE BANK DETAILS ----------------------
 export const saveBankDetails = async (req, res, next) => {
   try {
     const { accountNumber, bankCode } = req.body;
 
-    if (!accountNumber || !bankCode) {
+    if (!accountNumber || !bankCode)
       return res.status(400).json({ message: "Account number and bank are required" });
-    }
 
-    let accountName = "TEST ACCOUNT";
+    let accountName  = "TEST ACCOUNT";
     let recipientCode = `TEST_RECIPIENT_${Date.now()}`;
 
     if (isTestMode) {
-      // ✅ TEST MODE: skip Paystack calls, save directly
       console.log("⚠ Test mode: skipping Paystack verification");
     } else {
-      // LIVE MODE: verify and create recipient on Paystack
       const verify = await axios.get(
         `https://api.paystack.co/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
         { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
       );
 
-      if (!verify.data.status) {
+      if (!verify.data.status)
         return res.status(400).json({ message: "Could not verify account" });
-      }
 
       accountName = verify.data.data.account_name;
 
       const recipient = await axios.post(
         "https://api.paystack.co/transferrecipient",
         {
-          type: "nuban",
-          name: accountName,
+          type:           "nuban",
+          name:           accountName,
           account_number: accountNumber,
-          bank_code: bankCode,
-          currency: "NGN",
+          bank_code:      bankCode,
+          currency:       "NGN",
         },
         { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
       );
@@ -313,14 +300,13 @@ export const saveBankDetails = async (req, res, next) => {
     ).select("-password");
 
     res.json({ success: true, message: "Bank details saved", bankDetails: user.bankDetails });
-
   } catch (err) {
     console.error("BANK DETAILS ERROR:", err.response?.data || err.message);
     res.status(500).json({ message: "Failed to save bank details" });
   }
 };
 
-// GET BANKS LIST
+// ---------------------- GET BANKS LIST ----------------------
 export const getBanksList = async (req, res, next) => {
   try {
     const response = await axios.get("https://api.paystack.co/bank?currency=NGN", {

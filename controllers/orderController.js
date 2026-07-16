@@ -6,6 +6,7 @@ import VendorPlan from "../models/VendorPlan.js";
 import Notification from "../models/Notification.js";
 import nodemailer from "nodemailer";
 import { calculateCommission, PLAN_MULTIPLIER, COMMISSION_RATES } from "../config/commissionConfig.js";
+import { processReferralReward } from "./referralController.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMISSION RATES (re-exported for routes that import from here directly)
@@ -69,7 +70,7 @@ export const calcCommissionBreakdown = async (items, productMap) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EMAIL TRANSPORTER — uses GMAIL_USER and GMAIL_APP_PASSWORD from .env
+// EMAIL TRANSPORTER
 // ─────────────────────────────────────────────────────────────────────────────
 const makeTransporter = () =>
   nodemailer.createTransport({
@@ -104,7 +105,7 @@ const allPartiesShipped = (order) => {
 };
 
 const allShippedPartiesConfirmed = (order) => {
-  const shipped   = (order.partyShipments   || []).map((s) => s.partyKey);
+  const shipped   = (order.partyShipments    || []).map((s) => s.partyKey);
   const confirmed = (order.partyConfirmations || []).map((c) => c.partyKey);
   return shipped.length > 0 && shipped.every((k) => confirmed.includes(k));
 };
@@ -291,7 +292,6 @@ export const createOrder = async (req, res) => {
 
     const buyer = await User.findById(userId).select("name email");
 
-    // Notify buyer that order was placed
     await Notification.create({
       userId:  userId,
       type:    "order_placed",
@@ -300,7 +300,7 @@ export const createOrder = async (req, res) => {
       orderId: order._id,
     });
 
-    // Notify each vendor about their portion
+    // Notify each vendor
     const vendorItemsMap = {};
     for (const item of orderItems) {
       if (item.vendorId) {
@@ -555,7 +555,6 @@ export const vendorMarkShipped = async (req, res) => {
       order.vendorShippedAt = new Date();
       order.escrowStatus    = "holding";
 
-      // Notify the buyer — all parties have shipped
       await Notification.create({
         userId:  order.user._id,
         type:    "order_shipped",
@@ -566,7 +565,6 @@ export const vendorMarkShipped = async (req, res) => {
 
       if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
     } else {
-      // Notify buyer — partial shipment (some items on the way)
       const vendor = await User.findById(vendorId).select("name");
       await Notification.create({
         userId:  order.user._id,
@@ -617,7 +615,6 @@ export const adminMarkShipped = async (req, res) => {
       order.vendorShippedAt = new Date();
       order.escrowStatus    = "holding";
 
-      // Notify the buyer — all parties shipped
       await Notification.create({
         userId:  order.user._id,
         type:    "order_shipped",
@@ -628,7 +625,6 @@ export const adminMarkShipped = async (req, res) => {
 
       if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
     } else {
-      // Notify buyer — platform items shipped, waiting on vendors
       await Notification.create({
         userId:  order.user._id,
         type:    "order_shipped",
@@ -649,9 +645,13 @@ export const adminMarkShipped = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOMER: CONFIRM RECEIVED (per-party)
+// ── This is where processReferralReward is triggered ─────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 export const customerConfirmReceived = async (req, res) => {
   try {
+    // FIX: populate user so order.user._id and order.user.name are both available
+    // when passed into processReferralReward — previously a missing populate here
+    // would make refereeId resolve to null inside processReferralReward.
     const order = await Order.findById(req.params.id).populate("user", "name email");
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (order.user._id.toString() !== req.user.id)
@@ -675,7 +675,12 @@ export const customerConfirmReceived = async (req, res) => {
       return res.status(400).json({ message: "A photo of the received items is required" });
 
     order.partyConfirmations = order.partyConfirmations || [];
-    order.partyConfirmations.push({ partyKey, vendorId: vendorId || null, photo: req.file.path, confirmedAt: new Date() });
+    order.partyConfirmations.push({
+      partyKey,
+      vendorId:    vendorId || null,
+      photo:       req.file.path,
+      confirmedAt: new Date(),
+    });
     if (!order.customerReceivePhoto) order.customerReceivePhoto = req.file.path;
 
     const nowAllConfirmed = allShippedPartiesConfirmed(order);
@@ -684,6 +689,18 @@ export const customerConfirmReceived = async (req, res) => {
       order.status              = "delivered";
       order.customerConfirmedAt = new Date();
       order.escrowStatus        = "pending_release";
+
+      // ── REFERRAL REWARD HOOK ──────────────────────────────────────────────
+      // FIX: Added diagnostic logging so you can confirm in server logs that:
+      //   1. This block is reached
+      //   2. The order has a populated user
+      //   3. processReferralReward completes (or logs its own ❌ if it fails)
+      console.log(
+        `[Order] All parties confirmed for order ${order._id} — triggering referral reward | user: ${order.user?._id}`
+      );
+      await processReferralReward(order);
+      console.log(`[Order] processReferralReward returned for order ${order._id}`);
+      // ─────────────────────────────────────────────────────────────────────
 
       // Notify buyer — full delivery confirmed
       await Notification.create({
@@ -758,6 +775,7 @@ export const customerConfirmReceived = async (req, res) => {
     });
   } catch (err) {
     console.error("CUSTOMER CONFIRM ERROR:", err.message);
+    console.error("CUSTOMER CONFIRM STACK:", err.stack);
     res.status(500).json({ message: err.message });
   }
 };
@@ -868,7 +886,6 @@ export const releaseVendorPayment = async (req, res) => {
       order.escrowStatus = "released";
       order.vendorPaidAt = new Date();
 
-      // Notify buyer that payment has been released to the seller(s)
       await Notification.create({
         userId:  order.user,
         type:    "payment_released",
@@ -879,7 +896,6 @@ export const releaseVendorPayment = async (req, res) => {
     }
 
     order.payoutNote = note || order.payoutNote;
-
     await order.save();
 
     res.json({

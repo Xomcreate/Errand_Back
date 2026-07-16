@@ -13,7 +13,10 @@ const notificationSchema = new mongoose.Schema(
         "order_placed",
         "order_shipped",
         "order_delivered",
+        "payment_confirmed",   // ← ADDED: used in payWithWallet
         "payment_released",
+        "referral_reward",     // ← ADDED: used in processReferralReward & processPayout
+        "welcome_cashback",    // ← ADDED: used in processReferralReward for referee
         "promotion",
         "system",
       ],
