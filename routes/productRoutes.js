@@ -4,27 +4,23 @@ import {
   getProductById,
   createProduct,
   updateProduct,
-  deleteProduct
+  deleteProduct,
+  deleteAllProducts,
 } from "../controllers/productController.js";
 
 import { upload } from "../middleware/upload.js";
 
 const router = express.Router();
 
-// ✅ GET ALL PRODUCTS (with ?category=)
 router.get("/", getProducts);
-
-// ✅ GET SINGLE PRODUCT
 router.get("/:id", getProductById);
-
-// ✅ CREATE PRODUCT (WITH IMAGE + BRAND)
 router.post("/", upload.single("image"), createProduct);
-
-
-// ✅ UPDATE PRODUCT
 router.put("/:id", upload.single("image"), updateProduct);
 
-// ✅ DELETE PRODUCT
+// ✅ DELETE ALL PRODUCTS — put before "/:id" for clarity
+router.delete("/", deleteAllProducts);
+
+// ✅ DELETE SINGLE PRODUCT
 router.delete("/:id", deleteProduct);
 
 export default router;

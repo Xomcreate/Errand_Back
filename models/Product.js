@@ -13,6 +13,7 @@ const ProductSchema = new mongoose.Schema(
     },
 
     image: { type: String },
+    imagePublicId: { type: String, default: null }, // needed to delete from Cloudinary later
 
     price: { type: Number, required: true },
     oldPrice: { type: Number },
