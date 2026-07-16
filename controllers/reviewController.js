@@ -1,4 +1,5 @@
 const Review = require("../models/Review");
+const { uploadToCloudinary } = require("../utils/uploadToCloudinary");
 
 // PUBLIC → approved only
 exports.getReviews = async (req, res) => {
@@ -29,11 +30,20 @@ exports.createReview = async (req, res) => {
   }
 
   try {
+    let photoUrl = null;
+
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, {
+        folder: "reviews",
+      });
+      photoUrl = result.secure_url;
+    }
+
     const review = new Review({
       name,
       rating,
       comment,
-      photo: req.file ? `/uploads/${req.file.filename}` : null,
+      photo: photoUrl, // full Cloudinary URL, or null if no photo uploaded
       approved: false, // ALWAYS false on submit
     });
 

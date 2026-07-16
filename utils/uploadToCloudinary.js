@@ -1,7 +1,7 @@
-import cloudinary from "../config/cloudinary.js";
-import streamifier from "streamifier";
+const cloudinary = require("../config/cloudinary");
+const streamifier = require("streamifier");
 
-export const uploadToCloudinary = (fileBuffer, options = {}) => {
+const uploadToCloudinary = (fileBuffer, options = {}) => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       { resource_type: "auto", folder: "uploads", ...options },
@@ -10,3 +10,5 @@ export const uploadToCloudinary = (fileBuffer, options = {}) => {
     streamifier.createReadStream(fileBuffer).pipe(uploadStream);
   });
 };
+
+module.exports = { uploadToCloudinary };

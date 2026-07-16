@@ -2,15 +2,14 @@ const express = require("express");
 const router = express.Router();
 const reviewController = require("../controllers/reviewController");
 const multer = require("multer");
-const path = require("path");
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname)),
+// Memory storage — we need the raw buffer to stream straight to
+// Cloudinary, we don't want to save anything to local disk.
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB cap, adjust as needed
 });
-
-const upload = multer({ storage });
 
 // PUBLIC
 router.get("/", reviewController.getReviews);
