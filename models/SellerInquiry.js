@@ -7,7 +7,8 @@ const SellerInquirySchema = new mongoose.Schema(
     phone: String,
     category: { type: String, required: true },
     description: { type: String, required: true },
-    filePath: String,
+    fileUrl: String,       // secure_url returned by Cloudinary
+    filePublicId: String,  // needed to delete the file from Cloudinary later
     status: { type: String, enum: ["Pending", "Contacted"], default: "Pending" },
   },
   { timestamps: true }

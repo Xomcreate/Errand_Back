@@ -1,14 +1,18 @@
 import SellerInquiry from "../models/SellerInquiry.js";
 import nodemailer from "nodemailer";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/uploadToCloudinary.js");
 
 // -------------------- Nodemailer Transport --------------------
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: false, // true for 465, false for 587
+  secure: false,
   auth: {
-    user: process.env.GMAIL_USER, // your Gmail
-    pass: process.env.GMAIL_APP_PASSWORD, // app password
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
   },
 });
 
@@ -16,7 +20,17 @@ const transporter = nodemailer.createTransport({
 export const submitInquiry = async (req, res) => {
   try {
     const { name, email, phone, category, description } = req.body;
-    const filePath = req.file ? req.file.filename : null;
+
+    let fileUrl = null;
+    let filePublicId = null;
+
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, {
+        public_id: `${Date.now()}-${req.file.originalname.split(".")[0]}`,
+      });
+      fileUrl = result.secure_url;
+      filePublicId = result.public_id;
+    }
 
     const inquiry = await SellerInquiry.create({
       name,
@@ -24,7 +38,8 @@ export const submitInquiry = async (req, res) => {
       phone,
       category,
       description,
-      filePath,
+      fileUrl,
+      filePublicId,
     });
 
     return res.status(201).json({
@@ -33,6 +48,7 @@ export const submitInquiry = async (req, res) => {
       data: inquiry,
     });
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ success: false, msg: err.message });
   }
 };
@@ -47,12 +63,53 @@ export const getAllInquiries = async (req, res) => {
   }
 };
 
-// -------------------- Delete Inquiry --------------------
+// -------------------- Delete Single Inquiry --------------------
 export const deleteInquiry = async (req, res) => {
   try {
+    const inquiry = await SellerInquiry.findById(req.params.id);
+    if (!inquiry) {
+      return res.status(404).json({ success: false, msg: "Inquiry not found" });
+    }
+
+    if (inquiry.filePublicId) {
+      try {
+        await deleteFromCloudinary(inquiry.filePublicId);
+      } catch (cloudErr) {
+        console.error("Cloudinary delete failed:", cloudErr.message);
+      }
+    }
+
     await SellerInquiry.findByIdAndDelete(req.params.id);
     return res.status(200).json({ success: true });
   } catch (err) {
+    return res.status(500).json({ success: false, msg: err.message });
+  }
+};
+
+// -------------------- Delete ALL Inquiries --------------------
+export const deleteAllInquiries = async (req, res) => {
+  try {
+    const inquiries = await SellerInquiry.find({ filePublicId: { $ne: null } });
+
+    await Promise.all(
+      inquiries.map((inq) =>
+        inq.filePublicId
+          ? deleteFromCloudinary(inq.filePublicId).catch((e) =>
+              console.error(`Cloudinary delete failed for ${inq.filePublicId}:`, e.message)
+            )
+          : Promise.resolve()
+      )
+    );
+
+    const result = await SellerInquiry.deleteMany({});
+
+    return res.status(200).json({
+      success: true,
+      msg: `Deleted ${result.deletedCount} inquiries.`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ success: false, msg: err.message });
   }
 };
@@ -83,7 +140,6 @@ export const replyInquiry = async (req, res) => {
       { new: true }
     );
 
-    // -------------------- Send Email --------------------
     await transporter.sendMail({
       from: `"Errandbox Marketplace" <${process.env.GMAIL_USER}>`,
       to: inquiry.email,
@@ -108,7 +164,6 @@ export const replyInquiry = async (req, res) => {
       msg: "Reply sent via email successfully!",
       data: inquiry,
     });
-
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, msg: err.message });
