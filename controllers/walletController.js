@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import Order from "../models/Order.js";
-import WalletTransaction from "../models/WalletTransaction.js";
+import WalletTransaction from "../models/Wallettransaction.js";
 import Notification from "../models/Notification.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
