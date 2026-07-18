@@ -243,7 +243,7 @@ const sendAdminNewOrderEmail = async ({ adminEmail, order, buyerName, buyerEmail
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CREATE ORDER — FIXED: response now sent immediately after Order.create();
+// CREATE ORDER — response sent immediately after Order.create();
 // notification + all emails run afterward in the background so the customer's
 // "Proceed to Checkout" click is never blocked by slow/timing-out SMTP calls.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,6 +540,9 @@ export const getVendorOrders = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VENDOR: MARK SHIPPED
+// ── FIXED: response now sent immediately after order.save(); notification
+// creation + the shipped-email (SMTP, slow) now run afterward in the
+// background so the vendor's "Confirm & Ship" tap isn't blocked on Gmail. ──
 // ─────────────────────────────────────────────────────────────────────────────
 export const vendorMarkShipped = async (req, res) => {
   try {
@@ -560,7 +563,7 @@ export const vendorMarkShipped = async (req, res) => {
     if (alreadyShipped)
       return res.status(400).json({ message: "You have already marked this order as shipped" });
 
-    // ── CLOUDINARY: upload the memory-buffer photo instead of using a local path ──
+    // ── CLOUDINARY: has to stay in the request path — we need the URL before saving ──
     const uploadResult = await uploadToCloudinary(req.file.buffer, { folder: "orders/shipments" });
     const photoUrl = uploadResult.secure_url;
 
@@ -568,35 +571,51 @@ export const vendorMarkShipped = async (req, res) => {
     order.partyShipments.push({ partyKey: vendorId, vendorId, photo: photoUrl, shippedAt: new Date() });
     if (!order.vendorShipPhoto) order.vendorShipPhoto = photoUrl;
 
-    if (allPartiesShipped(order)) {
+    const justCompletedShipping = allPartiesShipped(order);
+    let vendorNameForNotif = null;
+
+    if (justCompletedShipping) {
       order.status          = "shipped";
       order.vendorShippedAt = new Date();
       order.escrowStatus    = "holding";
-
-      await Notification.create({
-        userId:  order.user._id,
-        type:    "order_shipped",
-        title:   "Your order is on its way! 📦",
-        message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been shipped. Confirm receipt once your items arrive.`,
-        orderId: order._id,
-      });
-
-      if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
     } else {
-      const vendor = await User.findById(vendorId).select("name");
-      await Notification.create({
-        userId:  order.user._id,
-        type:    "order_shipped",
-        title:   "Some of your items have shipped 📦",
-        message: `Items from ${vendor?.name || "a seller"} in order #${order._id.toString().slice(-6).toUpperCase()} are on their way. Waiting for remaining sellers to ship.`,
-        orderId: order._id,
-      });
-
       if (["pending", "paid"].includes(order.status)) order.status = "processing";
+      // fetched now (cheap) so the background block doesn't need to re-query
+      const vendor = await User.findById(vendorId).select("name");
+      vendorNameForNotif = vendor?.name || "a seller";
     }
 
     await order.save();
+
+    // ── RESPOND IMMEDIATELY — vendor does not wait on notification/email ──
     res.json({ success: true, order });
+
+    // ── BACKGROUND WORK (fire-and-forget, runs after response is already sent) ──
+    setImmediate(async () => {
+      try {
+        if (justCompletedShipping) {
+          await Notification.create({
+            userId:  order.user._id,
+            type:    "order_shipped",
+            title:   "Your order is on its way! 📦",
+            message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been shipped. Confirm receipt once your items arrive.`,
+            orderId: order._id,
+          });
+
+          if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
+        } else {
+          await Notification.create({
+            userId:  order.user._id,
+            type:    "order_shipped",
+            title:   "Some of your items have shipped 📦",
+            message: `Items from ${vendorNameForNotif} in order #${order._id.toString().slice(-6).toUpperCase()} are on their way. Waiting for remaining sellers to ship.`,
+            orderId: order._id,
+          });
+        }
+      } catch (bgErr) {
+        console.error("vendorMarkShipped background tasks failed:", bgErr.message);
+      }
+    });
   } catch (err) {
     console.error("vendorMarkShipped error:", err);
     res.status(500).json({ message: err.message });
@@ -605,6 +624,8 @@ export const vendorMarkShipped = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN: MARK PLATFORM ITEMS SHIPPED
+// ── FIXED: same pattern as vendorMarkShipped — respond immediately, run
+// notification + email in the background. ──
 // ─────────────────────────────────────────────────────────────────────────────
 export const adminMarkShipped = async (req, res) => {
   try {
@@ -625,7 +646,7 @@ export const adminMarkShipped = async (req, res) => {
     if (alreadyShipped)
       return res.status(400).json({ message: "Platform items already marked as shipped" });
 
-    // ── CLOUDINARY: upload the memory-buffer photo instead of using a local path ──
+    // ── CLOUDINARY: has to stay in the request path — we need the URL before saving ──
     const uploadResult = await uploadToCloudinary(req.file.buffer, { folder: "orders/shipments" });
     const photoUrl = uploadResult.secure_url;
 
@@ -633,34 +654,47 @@ export const adminMarkShipped = async (req, res) => {
     order.partyShipments.push({ partyKey: "__platform__", vendorId: null, photo: photoUrl, shippedAt: new Date() });
     if (!order.vendorShipPhoto) order.vendorShipPhoto = photoUrl;
 
-    if (allPartiesShipped(order)) {
+    const justCompletedShipping = allPartiesShipped(order);
+
+    if (justCompletedShipping) {
       order.status          = "shipped";
       order.vendorShippedAt = new Date();
       order.escrowStatus    = "holding";
-
-      await Notification.create({
-        userId:  order.user._id,
-        type:    "order_shipped",
-        title:   "Your order is on its way! 📦",
-        message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been fully shipped. Confirm receipt once your items arrive.`,
-        orderId: order._id,
-      });
-
-      if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
     } else {
-      await Notification.create({
-        userId:  order.user._id,
-        type:    "order_shipped",
-        title:   "Some of your items have shipped 📦",
-        message: `Platform items from order #${order._id.toString().slice(-6).toUpperCase()} are on their way. Waiting for remaining sellers to ship.`,
-        orderId: order._id,
-      });
-
       if (["pending", "paid"].includes(order.status)) order.status = "processing";
     }
 
     await order.save();
+
+    // ── RESPOND IMMEDIATELY — admin does not wait on notification/email ──
     res.json({ success: true, order });
+
+    // ── BACKGROUND WORK (fire-and-forget, runs after response is already sent) ──
+    setImmediate(async () => {
+      try {
+        if (justCompletedShipping) {
+          await Notification.create({
+            userId:  order.user._id,
+            type:    "order_shipped",
+            title:   "Your order is on its way! 📦",
+            message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been fully shipped. Confirm receipt once your items arrive.`,
+            orderId: order._id,
+          });
+
+          if (order.user?.email) await sendShippedEmail(order, order.user.email, order.user.name);
+        } else {
+          await Notification.create({
+            userId:  order.user._id,
+            type:    "order_shipped",
+            title:   "Some of your items have shipped 📦",
+            message: `Platform items from order #${order._id.toString().slice(-6).toUpperCase()} are on their way. Waiting for remaining sellers to ship.`,
+            orderId: order._id,
+          });
+        }
+      } catch (bgErr) {
+        console.error("adminMarkShipped background tasks failed:", bgErr.message);
+      }
+    });
   } catch (err) {
     console.error("adminMarkShipped error:", err);
     res.status(500).json({ message: err.message });
