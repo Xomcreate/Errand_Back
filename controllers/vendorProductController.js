@@ -1,6 +1,7 @@
 import VendorProduct from "../models/VendorProduct.js";
 import VendorPlan from "../models/VendorPlan.js";
 import { PLAN_CONFIG } from "../config/commissionConfig.js";
+import { uploadToCloudinary } from "../utils/uploadToCloudinary.js"; // ← adjust path to match your project
 
 // ── Helper: resolve effective plan (handles expiry) ──────────────────────────
 const resolveEffectivePlan = async (vendorPlan, vendorId) => {
@@ -10,7 +11,6 @@ const resolveEffectivePlan = async (vendorPlan, vendorId) => {
     new Date() > new Date(vendorPlan.planExpiresAt);
 
   if (isExpired) {
-    // Reset in DB so all endpoints agree going forward
     const resetPlan = await VendorPlan.findOneAndUpdate(
       { vendorId },
       {
@@ -67,14 +67,27 @@ export const createVendorProduct = async (req, res) => {
       });
     }
 
-    // 5. Create product — inherit isVerified from current (effective) plan
+    // 5. Upload image to Cloudinary (if provided)
+    let imageUrl = "";
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.buffer, {
+          folder: "vendor-products",
+        });
+        imageUrl = result.secure_url;
+      } catch (uploadErr) {
+        return res.status(500).json({ message: "Image upload failed. Please try again." });
+      }
+    }
+
+    // 6. Create product — inherit isVerified from current (effective) plan
     const product = await VendorProduct.create({
       vendorId,
       name,
       category,
       price,
       stock:             stock || 0,
-      image:             req.file ? `/uploads/${req.file.filename}` : "",
+      image:             imageUrl,
       isVerifiedListing: vendorPlan.isVerified,
     });
 
@@ -85,15 +98,12 @@ export const createVendorProduct = async (req, res) => {
 };
 
 // ================= GET LOGGED-IN VENDOR PRODUCTS =================
-// Returns both products AND the resolved plan so the frontend always has
-// the real current limit without a separate /vendor-plan/my round-trip.
 export const getVendorProducts = async (req, res) => {
   try {
     const vendorId = req.user.id;
 
     const products = await VendorProduct.find({ vendorId }).sort({ createdAt: -1 });
 
-    // Get or create plan
     let vendorPlan = await VendorPlan.findOne({ vendorId });
     if (!vendorPlan) {
       const config = PLAN_CONFIG.basic;
@@ -105,7 +115,6 @@ export const getVendorProducts = async (req, res) => {
       });
     }
 
-    // Resolve expiry — resets DB if needed and returns the effective plan
     vendorPlan = await resolveEffectivePlan(vendorPlan, vendorId);
 
     res.json({ success: true, products, plan: vendorPlan });
