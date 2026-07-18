@@ -748,68 +748,6 @@ export const customerConfirmReceived = async (req, res) => {
       order.status              = "delivered";
       order.customerConfirmedAt = new Date();
       order.escrowStatus        = "pending_release";
-
-      // ── REFERRAL REWARD HOOK ──────────────────────────────────────────────
-      console.log(
-        `[Order] All parties confirmed for order ${order._id} — triggering referral reward | user: ${order.user?._id}`
-      );
-      await processReferralReward(order);
-      console.log(`[Order] processReferralReward returned for order ${order._id}`);
-      // ─────────────────────────────────────────────────────────────────────
-
-      // Notify buyer — full delivery confirmed
-      await Notification.create({
-        userId:  order.user._id,
-        type:    "order_delivered",
-        title:   "Order fully delivered ✅",
-        message: `You've confirmed all items from order #${order._id.toString().slice(-6).toUpperCase()}. Payment will be released to the seller(s) within 3–7 business days.`,
-        orderId: order._id,
-      });
-
-      const allIds = order.items.map((i) => i.productId);
-      const [pp, vp] = await Promise.all([
-        Product.find({ _id: { $in: allIds } }).select("name category"),
-        VendorProduct.find({ _id: { $in: allIds } }).select("name category"),
-      ]);
-      const pm = {};
-      pp.forEach((p) => (pm[p._id.toString()] = p));
-      vp.forEach((p) => (pm[p._id.toString()] = p));
-
-      const commBreakdown = await calcCommissionBreakdown(order.items, pm);
-      const adminUser     = await User.findOne({ role: "admin" }).select("name email");
-
-      for (const confirmation of order.partyConfirmations) {
-        const partyComm = commBreakdown.find((b) => b.partyKey === confirmation.partyKey) || {};
-
-        if (confirmation.partyKey === "__platform__") {
-          if (adminUser?.email) {
-            await sendPartyConfirmedEmail({
-              toEmail:    adminUser.email,
-              toName:     adminUser.name || "Admin",
-              order,
-              partyLabel: "Platform Store",
-              subtotal:   partyComm.gross,
-              commission: 0,
-              net:        partyComm.gross,
-              vendorPlan: "platform",
-            });
-          }
-        } else {
-          const vendor = await User.findById(confirmation.partyKey).select("name email");
-          if (vendor?.email) {
-            await sendPartyConfirmedEmail({
-              toEmail:    vendor.email,
-              toName:     vendor.name || "Vendor",
-              order,
-              partyLabel: vendor.name || "Vendor Store",
-              subtotal:   partyComm.gross,
-              commission: partyComm.commission,
-              net:        partyComm.net,
-              vendorPlan: partyComm.vendorPlan,
-            });
-          }
-        }
-      }
     }
 
     await order.save();
@@ -818,6 +756,8 @@ export const customerConfirmReceived = async (req, res) => {
     const confirmedCount = (order.partyConfirmations || []).length;
     const remaining      = shippedCount - confirmedCount;
 
+    // ── RESPOND IMMEDIATELY — customer does not wait on referral reward,
+    // notification, commission calc, or the per-vendor email loop ──
     res.json({
       success: true,
       message: nowAllConfirmed
@@ -828,6 +768,80 @@ export const customerConfirmReceived = async (req, res) => {
       confirmedCount,
       remainingCount: remaining,
     });
+
+    // ── BACKGROUND WORK (fire-and-forget, runs after response is already sent) ──
+    if (nowAllConfirmed) {
+      setImmediate(async () => {
+        try {
+          // ── REFERRAL REWARD HOOK ──────────────────────────────────────────
+          console.log(
+            `[Order] All parties confirmed for order ${order._id} — triggering referral reward | user: ${order.user?._id}`
+          );
+          await processReferralReward(order);
+          console.log(`[Order] processReferralReward returned for order ${order._id}`);
+          // ───────────────────────────────────────────────────────────────────
+
+          // Notify buyer — full delivery confirmed
+          await Notification.create({
+            userId:  order.user._id,
+            type:    "order_delivered",
+            title:   "Order fully delivered ✅",
+            message: `You've confirmed all items from order #${order._id.toString().slice(-6).toUpperCase()}. Payment will be released to the seller(s) within 3–7 business days.`,
+            orderId: order._id,
+          });
+
+          const allIds = order.items.map((i) => i.productId);
+          const [pp, vp] = await Promise.all([
+            Product.find({ _id: { $in: allIds } }).select("name category"),
+            VendorProduct.find({ _id: { $in: allIds } }).select("name category"),
+          ]);
+          const pm = {};
+          pp.forEach((p) => (pm[p._id.toString()] = p));
+          vp.forEach((p) => (pm[p._id.toString()] = p));
+
+          const commBreakdown = await calcCommissionBreakdown(order.items, pm);
+          const adminUser     = await User.findOne({ role: "admin" }).select("name email");
+
+          // Emails to each party — run in parallel instead of one-by-one
+          await Promise.allSettled(
+            order.partyConfirmations.map(async (confirmation) => {
+              const partyComm = commBreakdown.find((b) => b.partyKey === confirmation.partyKey) || {};
+
+              if (confirmation.partyKey === "__platform__") {
+                if (adminUser?.email) {
+                  await sendPartyConfirmedEmail({
+                    toEmail:    adminUser.email,
+                    toName:     adminUser.name || "Admin",
+                    order,
+                    partyLabel: "Platform Store",
+                    subtotal:   partyComm.gross,
+                    commission: 0,
+                    net:        partyComm.gross,
+                    vendorPlan: "platform",
+                  });
+                }
+              } else {
+                const vendor = await User.findById(confirmation.partyKey).select("name email");
+                if (vendor?.email) {
+                  await sendPartyConfirmedEmail({
+                    toEmail:    vendor.email,
+                    toName:     vendor.name || "Vendor",
+                    order,
+                    partyLabel: vendor.name || "Vendor Store",
+                    subtotal:   partyComm.gross,
+                    commission: partyComm.commission,
+                    net:        partyComm.net,
+                    vendorPlan: partyComm.vendorPlan,
+                  });
+                }
+              }
+            })
+          );
+        } catch (bgErr) {
+          console.error("customerConfirmReceived background tasks failed:", bgErr.message);
+        }
+      });
+    }
   } catch (err) {
     console.error("CUSTOMER CONFIRM ERROR:", err.message);
     console.error("CUSTOMER CONFIRM STACK:", err.stack);
