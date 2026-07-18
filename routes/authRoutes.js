@@ -12,7 +12,10 @@ import {
   getMe,
   saveBankDetails,
   getBanksList,
-  verifyBankAccount
+  verifyBankAccount,
+  submitKyc,
+  getPendingKyc,
+  reviewKyc,
 } from "../controllers/authController.js";
 import { upload } from "../middleware/upload.js";
 
@@ -39,6 +42,19 @@ router.put(
   upload.single("profileImage"),
   updateProfile
 );
+
+// KYC
+router.post(
+  "/kyc",
+  protect,
+  upload.fields([
+    { name: "document", maxCount: 1 },
+    { name: "selfie", maxCount: 1 },
+  ]),
+  submitKyc
+);
+router.get("/kyc/pending", protect, getPendingKyc);
+router.patch("/users/:id/kyc-review", protect, reviewKyc);
 
 
 export default router;

@@ -202,6 +202,8 @@ export const updateProfile = async (req, res, next) => {
 };
 
 // ---------------------- TOGGLE VERIFICATION ----------------------
+// Manual override — kept for cases where an admin wants to verify/unverify
+// a vendor outside of the KYC flow (e.g. legacy vendors onboarded before KYC).
 export const toggleVerification = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -226,6 +228,112 @@ export const getMe = async (req, res, next) => {
     const user = await User.findById(req.user.id).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
     res.status(200).json({ user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KYC
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ---------------------- SUBMIT KYC (vendor) ----------------------
+export const submitKyc = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (user.role !== "vendor")
+      return res.status(403).json({ message: "Only vendors can submit KYC" });
+
+    const { idType, idNumber } = req.body;
+    if (!idType || !idNumber)
+      return res.status(400).json({ message: "ID type and ID number are required" });
+
+    const documentFile = req.files?.document?.[0];
+    const selfieFile    = req.files?.selfie?.[0];
+
+    if (!documentFile)
+      return res.status(400).json({ message: "Please upload a photo of your ID document" });
+
+    let documentUrl = user.kyc?.documentUrl || "";
+    let selfieUrl    = user.kyc?.selfieUrl    || "";
+
+    try {
+      const docResult = await uploadToCloudinary(documentFile.buffer, { folder: "kyc-documents" });
+      documentUrl = docResult.secure_url;
+
+      if (selfieFile) {
+        const selfieResult = await uploadToCloudinary(selfieFile.buffer, { folder: "kyc-selfies" });
+        selfieUrl = selfieResult.secure_url;
+      }
+    } catch (uploadErr) {
+      console.error("KYC CLOUDINARY UPLOAD ERROR:", uploadErr);
+      return res.status(500).json({ message: "Document upload failed" });
+    }
+
+    user.kyc = {
+      idType,
+      idNumber,
+      documentUrl,
+      selfieUrl,
+      status:          "Pending",
+      rejectionReason: "",
+      submittedAt:     new Date(),
+      reviewedAt:      null,
+    };
+
+    await user.save();
+    res.status(200).json({ success: true, message: "KYC submitted for review", kyc: user.kyc });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------- GET PENDING KYC SUBMISSIONS (admin) ----------------------
+export const getPendingKyc = async (req, res, next) => {
+  try {
+    const vendors = await User.find({ role: "vendor", "kyc.status": "Pending" })
+      .select("-password")
+      .sort({ "kyc.submittedAt": 1 });
+    res.status(200).json({ success: true, vendors });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------- REVIEW KYC — approve/reject (admin) ----------------------
+// Approving is what makes the vendor "Verified" — isVerified flips to true here.
+export const reviewKyc = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { decision, rejectionReason } = req.body; // "approve" | "reject"
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.kyc || user.kyc.status !== "Pending")
+      return res.status(400).json({ message: "No pending KYC submission for this user" });
+
+    if (decision === "approve") {
+      user.kyc.status          = "Approved";
+      user.kyc.reviewedAt      = new Date();
+      user.kyc.rejectionReason = "";
+      user.isVerified          = true;
+    } else if (decision === "reject") {
+      user.kyc.status          = "Rejected";
+      user.kyc.reviewedAt      = new Date();
+      user.kyc.rejectionReason = rejectionReason || "Submitted documents could not be verified";
+      user.isVerified          = false;
+    } else {
+      return res.status(400).json({ message: "decision must be 'approve' or 'reject'" });
+    }
+
+    await user.save();
+    res.status(200).json({
+      success:    true,
+      message:    `KYC ${decision}d`,
+      kyc:        user.kyc,
+      isVerified: user.isVerified,
+    });
   } catch (error) {
     next(error);
   }

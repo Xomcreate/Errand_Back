@@ -23,6 +23,21 @@ const userSchema = new mongoose.Schema(
       recipientCode: { type: String, default: "" },
     },
 
+    // ── KYC ──────────────────────────────────────────────────────────────────
+    // Vendor submits an ID type + number + document (and optional selfie) for
+    // review. Approving a submission is what flips isVerified to true — this
+    // is the "verified vendor" badge shown across the app.
+    kyc: {
+      idType:          { type: String, enum: ["", "NIN", "BVN", "Voters Card", "International Passport", "Driver's License"], default: "" },
+      idNumber:        { type: String, default: "" },
+      documentUrl:      { type: String, default: "" },
+      selfieUrl:        { type: String, default: "" },
+      status:           { type: String, enum: ["Not Submitted", "Pending", "Approved", "Rejected"], default: "Not Submitted" },
+      rejectionReason:  { type: String, default: "" },
+      submittedAt:      { type: Date, default: null },
+      reviewedAt:       { type: Date, default: null },
+    },
+
     description: { type: String, default: "" },
 
     password: { type: String, required: true, minlength: 8 },
