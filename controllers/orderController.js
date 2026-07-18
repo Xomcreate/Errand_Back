@@ -7,7 +7,7 @@ import Notification from "../models/Notification.js";
 import nodemailer from "nodemailer";
 import { calculateCommission, PLAN_MULTIPLIER, COMMISSION_RATES } from "../config/commissionConfig.js";
 import { processReferralReward } from "./referralController.js";
-import { uploadToCloudinary } from "../utils/cloudinaryUpload.js";
+import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMISSION RATES (re-exported for routes that import from here directly)
