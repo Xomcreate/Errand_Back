@@ -7,6 +7,7 @@ import Notification from "../models/Notification.js";
 import nodemailer from "nodemailer";
 import { calculateCommission, PLAN_MULTIPLIER, COMMISSION_RATES } from "../config/commissionConfig.js";
 import { processReferralReward } from "./referralController.js";
+import { uploadToCloudinary } from "../utils/cloudinaryUpload.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMISSION RATES (re-exported for routes that import from here directly)
@@ -546,9 +547,13 @@ export const vendorMarkShipped = async (req, res) => {
     if (alreadyShipped)
       return res.status(400).json({ message: "You have already marked this order as shipped" });
 
+    // ── CLOUDINARY: upload the memory-buffer photo instead of using a local path ──
+    const uploadResult = await uploadToCloudinary(req.file.buffer, { folder: "orders/shipments" });
+    const photoUrl = uploadResult.secure_url;
+
     order.partyShipments = order.partyShipments || [];
-    order.partyShipments.push({ partyKey: vendorId, vendorId, photo: req.file.path, shippedAt: new Date() });
-    if (!order.vendorShipPhoto) order.vendorShipPhoto = req.file.path;
+    order.partyShipments.push({ partyKey: vendorId, vendorId, photo: photoUrl, shippedAt: new Date() });
+    if (!order.vendorShipPhoto) order.vendorShipPhoto = photoUrl;
 
     if (allPartiesShipped(order)) {
       order.status          = "shipped";
@@ -580,6 +585,7 @@ export const vendorMarkShipped = async (req, res) => {
     await order.save();
     res.json({ success: true, order });
   } catch (err) {
+    console.error("vendorMarkShipped error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -606,9 +612,13 @@ export const adminMarkShipped = async (req, res) => {
     if (alreadyShipped)
       return res.status(400).json({ message: "Platform items already marked as shipped" });
 
+    // ── CLOUDINARY: upload the memory-buffer photo instead of using a local path ──
+    const uploadResult = await uploadToCloudinary(req.file.buffer, { folder: "orders/shipments" });
+    const photoUrl = uploadResult.secure_url;
+
     order.partyShipments = order.partyShipments || [];
-    order.partyShipments.push({ partyKey: "__platform__", vendorId: null, photo: req.file.path, shippedAt: new Date() });
-    if (!order.vendorShipPhoto) order.vendorShipPhoto = req.file.path;
+    order.partyShipments.push({ partyKey: "__platform__", vendorId: null, photo: photoUrl, shippedAt: new Date() });
+    if (!order.vendorShipPhoto) order.vendorShipPhoto = photoUrl;
 
     if (allPartiesShipped(order)) {
       order.status          = "shipped";
@@ -639,6 +649,7 @@ export const adminMarkShipped = async (req, res) => {
     await order.save();
     res.json({ success: true, order });
   } catch (err) {
+    console.error("adminMarkShipped error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -674,14 +685,18 @@ export const customerConfirmReceived = async (req, res) => {
     if (!req.file)
       return res.status(400).json({ message: "A photo of the received items is required" });
 
+    // ── CLOUDINARY: upload the memory-buffer photo instead of using a local path ──
+    const uploadResult = await uploadToCloudinary(req.file.buffer, { folder: "orders/receipts" });
+    const photoUrl = uploadResult.secure_url;
+
     order.partyConfirmations = order.partyConfirmations || [];
     order.partyConfirmations.push({
       partyKey,
       vendorId:    vendorId || null,
-      photo:       req.file.path,
+      photo:       photoUrl,
       confirmedAt: new Date(),
     });
-    if (!order.customerReceivePhoto) order.customerReceivePhoto = req.file.path;
+    if (!order.customerReceivePhoto) order.customerReceivePhoto = photoUrl;
 
     const nowAllConfirmed = allShippedPartiesConfirmed(order);
 
@@ -691,10 +706,6 @@ export const customerConfirmReceived = async (req, res) => {
       order.escrowStatus        = "pending_release";
 
       // ── REFERRAL REWARD HOOK ──────────────────────────────────────────────
-      // FIX: Added diagnostic logging so you can confirm in server logs that:
-      //   1. This block is reached
-      //   2. The order has a populated user
-      //   3. processReferralReward completes (or logs its own ❌ if it fails)
       console.log(
         `[Order] All parties confirmed for order ${order._id} — triggering referral reward | user: ${order.user?._id}`
       );
