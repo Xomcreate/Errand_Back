@@ -2,6 +2,7 @@ import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import axios from "axios";
+import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER — generate JWT (same config as login)
@@ -160,8 +161,17 @@ export const updateProfile = async (req, res, next) => {
     user.name  = body.name  ?? user.name;
     user.phone = body.phone ?? user.phone;
 
+    // ── Cloudinary upload ────────────────────────────────────────────────
     if (req.file) {
-      user.profileImage = `/uploads/${req.file.filename}`;
+      try {
+        const result = await uploadToCloudinary(req.file.buffer, {
+          folder: "profile-images",
+        });
+        user.profileImage = result.secure_url;
+      } catch (uploadErr) {
+        console.error("CLOUDINARY UPLOAD ERROR:", uploadErr);
+        return res.status(500).json({ message: "Image upload failed" });
+      }
     }
 
     if (user.role === "vendor") {
