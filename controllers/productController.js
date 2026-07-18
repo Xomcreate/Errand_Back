@@ -3,6 +3,10 @@ import Category from "../models/Category.js";
 import cloudinary from "../config/cloudinary.js";
 import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 
+// Escapes regex special characters so user search terms like "Note 10+",
+// "iPhone (Pro)", or "Size 32"" don't crash new RegExp() with a SyntaxError.
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // GET ALL PRODUCTS
 export const getProducts = async (req, res) => {
   try {
@@ -42,7 +46,7 @@ export const searchProducts = async (req, res) => {
     }
 
     const searchTerm = query.trim();
-    const regex = new RegExp(searchTerm, "i");
+    const regex = new RegExp(escapeRegex(searchTerm), "i");
 
     // Also match category names (category is an ObjectId ref, so we
     // resolve matching categories first, then include their products).

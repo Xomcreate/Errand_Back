@@ -13,6 +13,7 @@ import {
   saveBankDetails,
   getBanksList,
   verifyBankAccount,
+  getVendorBankDetails,
   submitKyc,
   getPendingKyc,
   reviewKyc,
@@ -31,6 +32,7 @@ router.get("/users", getAllUsers);
 router.get("/banks", protect, getBanksList);
 router.post("/bank-details", protect, saveBankDetails);
 router.get("/verify-account", protect, verifyBankAccount);
+router.get("/users/:id/bank-details", protect, getVendorBankDetails); // admin: read vendor's saved payout account
 router.delete("/users/:id", deleteUser);
 router.get("/me", protect, getMe);
 router.post("/users/:id/reset-password", resetPassword);

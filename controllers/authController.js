@@ -435,3 +435,22 @@ export const getBanksList = async (req, res, next) => {
     res.status(500).json({ message: "Failed to fetch banks" });
   }
 };
+
+// ---------------------- GET VENDOR BANK DETAILS (admin) ----------------------
+// Used by the admin payout screen to pull a vendor's saved, Paystack-verified
+// bank account instead of requiring the admin to type one in manually.
+export const getVendorBankDetails = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select("name storeName bankDetails");
+    if (!user) return res.status(404).json({ message: "Vendor not found" });
+
+    if (!user.bankDetails?.accountNumber) {
+      return res.status(404).json({ message: "This vendor has not added their bank details yet" });
+    }
+
+    res.json({ success: true, bankDetails: user.bankDetails });
+  } catch (error) {
+    next(error);
+  }
+};
