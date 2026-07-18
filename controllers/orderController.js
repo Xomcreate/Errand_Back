@@ -322,6 +322,17 @@ export const createOrder = async (req, res) => {
         await Promise.allSettled(
           Object.entries(vendorItemsMap).map(async ([vendorId, vItems]) => {
             const vendor = await User.findById(vendorId).select("name email");
+
+            // ← ADDED: in-app notification so the vendor sees it in their Notify tab
+            const vendorTotal = vItems.reduce((s, i) => s + i.price * i.quantity, 0);
+            await Notification.create({
+              userId:  vendorId,
+              type:    "order_placed",
+              title:   "New order received 🛒",
+              message: `You have a new order #${order._id.toString().slice(-6).toUpperCase()} — ${vItems.length} item${vItems.length !== 1 ? "s" : ""}, ₦${vendorTotal.toLocaleString()}.`,
+              orderId: order._id,
+            });
+
             if (vendor?.email) {
               await sendVendorNewOrderEmail({ vendorEmail: vendor.email, vendorName: vendor.name, order, vendorItems: vItems });
             }
@@ -946,6 +957,18 @@ export const releaseVendorPayment = async (req, res) => {
       commissionAmount: Math.round(totalCommission),
       net:              Math.round(totalNet),
     });
+
+    // ← ADDED: notify the vendor that their payout for this order was released
+    // (skip "__platform__" since that's the store itself, not a User doc)
+    if (partyKey !== "__platform__") {
+      await Notification.create({
+        userId:  partyKey,
+        type:    "payment_released",
+        title:   "Payment released to you 💰",
+        message: `Your payout of ₦${Math.round(totalNet).toLocaleString()} for order #${order._id.toString().slice(-6).toUpperCase()} has been released.`,
+        orderId: order._id,
+      });
+    }
 
     const requiredParties = getOrderPartyKeys(order);
     const paidParties     = order.partyPayouts.map((p) => p.partyKey);
