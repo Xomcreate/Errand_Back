@@ -6,6 +6,7 @@ import {
   updateProduct,
   deleteProduct,
   deleteAllProducts,
+  searchProducts,
 } from "../controllers/productController.js";
 
 import { getProductsBatch } from "../controllers/productBatchController.js";
@@ -15,6 +16,9 @@ import { upload } from "../middleware/upload.js";
 const router = express.Router();
 
 router.get("/", getProducts);
+
+// ✅ SEARCH — must come before "/:id" or "search" gets treated as an id
+router.get("/search", searchProducts);
 
 // ✅ BATCH LOOKUP — used by Cart page to fetch only the products it needs
 router.post("/batch", getProductsBatch);

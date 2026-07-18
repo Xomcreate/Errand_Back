@@ -170,3 +170,29 @@ export const verifyUpgrade = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// ── ADMIN: GET ALL VENDOR PLANS ──────────────────────────────────────────────
+// Lists every vendor and the plan they're currently on / paid for.
+export const getAllVendorPlans = async (req, res) => {
+  try {
+    const plans = await VendorPlan.find({})
+      .populate("vendorId", "name email role")
+      .sort({ createdAt: -1 });
+
+    const formatted = plans.map((p) => ({
+      _id: p._id,
+      vendorId: p.vendorId?._id,
+      vendorName: p.vendorId?.name || "Unknown",
+      vendorEmail: p.vendorId?.email || "—",
+      plan: p.plan,
+      isVerified: p.isVerified,
+      productLimit: p.productLimit,
+      planExpiresAt: p.planExpiresAt,
+      createdAt: p.createdAt,
+    }));
+
+    res.json({ success: true, count: formatted.length, vendors: formatted });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

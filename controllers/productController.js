@@ -1,4 +1,5 @@
 import Product from "../models/Product.js";
+import Category from "../models/Category.js";
 import cloudinary from "../config/cloudinary.js";
 import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 
@@ -25,6 +26,41 @@ export const getProductById = async (req, res) => {
     const product = await Product.findById(req.params.id).populate("category");
     if (!product) return res.status(404).json({ message: "Product not found" });
     res.json(product);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// SEARCH PRODUCTS — only ever returns products, never falls back to
+// returning everything if the query is empty or matches nothing.
+export const searchProducts = async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query || !query.trim()) {
+      return res.status(200).json({ count: 0, products: [] });
+    }
+
+    const searchTerm = query.trim();
+    const regex = new RegExp(searchTerm, "i");
+
+    // Also match category names (category is an ObjectId ref, so we
+    // resolve matching categories first, then include their products).
+    const matchingCategories = await Category.find({ name: regex }).select("_id");
+    const categoryIds = matchingCategories.map((c) => c._id);
+
+    const products = await Product.find({
+      $or: [
+        { name: regex },
+        { description: regex },
+        { brand: regex },
+        { category: { $in: categoryIds } },
+      ],
+    })
+      .populate("category")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ count: products.length, products });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -147,7 +183,6 @@ export const deleteAllProducts = async (req, res) => {
     const publicIds = products.map((p) => p.imagePublicId).filter(Boolean);
 
     if (publicIds.length > 0) {
-      // Cloudinary allows deleting up to 100 resources per call — batch it
       const batchSize = 100;
       for (let i = 0; i < publicIds.length; i += batchSize) {
         const batch = publicIds.slice(i, i + batchSize);
