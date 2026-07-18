@@ -243,7 +243,9 @@ const sendAdminNewOrderEmail = async ({ adminEmail, order, buyerName, buyerEmail
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CREATE ORDER
+// CREATE ORDER — FIXED: response now sent immediately after Order.create();
+// notification + all emails run afterward in the background so the customer's
+// "Proceed to Checkout" click is never blocked by slow/timing-out SMTP calls.
 // ─────────────────────────────────────────────────────────────────────────────
 export const createOrder = async (req, res) => {
   try {
@@ -291,39 +293,50 @@ export const createOrder = async (req, res) => {
       paymentStatus: "pending",
     });
 
-    const buyer = await User.findById(userId).select("name email");
+    // ── RESPOND IMMEDIATELY — customer does not wait on notifications/emails ──
+    res.status(201).json({ success: true, order });
 
-    await Notification.create({
-      userId:  userId,
-      type:    "order_placed",
-      title:   "Order placed successfully 🛒",
-      message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been placed. Total: ₦${totalAmount.toLocaleString()}.`,
-      orderId: order._id,
+    // ── BACKGROUND WORK (fire-and-forget, runs after response is already sent) ──
+    setImmediate(async () => {
+      try {
+        const buyer = await User.findById(userId).select("name email");
+
+        await Notification.create({
+          userId:  userId,
+          type:    "order_placed",
+          title:   "Order placed successfully 🛒",
+          message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been placed. Total: ₦${totalAmount.toLocaleString()}.`,
+          orderId: order._id,
+        });
+
+        // Notify each vendor — run in parallel instead of one-by-one
+        const vendorItemsMap = {};
+        for (const item of orderItems) {
+          if (item.vendorId) {
+            const vk = item.vendorId.toString();
+            if (!vendorItemsMap[vk]) vendorItemsMap[vk] = [];
+            vendorItemsMap[vk].push(item);
+          }
+        }
+
+        await Promise.allSettled(
+          Object.entries(vendorItemsMap).map(async ([vendorId, vItems]) => {
+            const vendor = await User.findById(vendorId).select("name email");
+            if (vendor?.email) {
+              await sendVendorNewOrderEmail({ vendorEmail: vendor.email, vendorName: vendor.name, order, vendorItems: vItems });
+            }
+          })
+        );
+
+        const adminUser = await User.findOne({ role: "admin" }).select("name email");
+        if (adminUser?.email) {
+          await sendAdminNewOrderEmail({ adminEmail: adminUser.email, order, buyerName: buyer?.name || "Customer", buyerEmail: buyer?.email || "" });
+        }
+      } catch (bgErr) {
+        console.error("Order background tasks failed:", bgErr.message);
+      }
     });
 
-    // Notify each vendor
-    const vendorItemsMap = {};
-    for (const item of orderItems) {
-      if (item.vendorId) {
-        const vk = item.vendorId.toString();
-        if (!vendorItemsMap[vk]) vendorItemsMap[vk] = [];
-        vendorItemsMap[vk].push(item);
-      }
-    }
-
-    for (const [vendorId, vItems] of Object.entries(vendorItemsMap)) {
-      const vendor = await User.findById(vendorId).select("name email");
-      if (vendor?.email) {
-        await sendVendorNewOrderEmail({ vendorEmail: vendor.email, vendorName: vendor.name, order, vendorItems: vItems });
-      }
-    }
-
-    const adminUser = await User.findOne({ role: "admin" }).select("name email");
-    if (adminUser?.email) {
-      await sendAdminNewOrderEmail({ adminEmail: adminUser.email, order, buyerName: buyer?.name || "Customer", buyerEmail: buyer?.email || "" });
-    }
-
-    res.status(201).json({ success: true, order });
   } catch (err) {
     console.error("Order error:", err);
     res.status(500).json({ message: err.message });
@@ -660,9 +673,6 @@ export const adminMarkShipped = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const customerConfirmReceived = async (req, res) => {
   try {
-    // FIX: populate user so order.user._id and order.user.name are both available
-    // when passed into processReferralReward — previously a missing populate here
-    // would make refereeId resolve to null inside processReferralReward.
     const order = await Order.findById(req.params.id).populate("user", "name email");
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (order.user._id.toString() !== req.user.id)
