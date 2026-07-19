@@ -1,5 +1,6 @@
 import Service from "../models/Service.js";
 import Booking from "../models/Booking.js";
+import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 
 const LISTING_FEES = {
   standard: 1000,
@@ -13,7 +14,6 @@ const ALLOWED_DURATIONS = [10, 15, 30, 60, 90];
 // PUBLIC ROUTES
 // ─────────────────────────────────────────────
 
-// GET /api/services
 export const getPublicServices = async (req, res) => {
   try {
     const { search = "", category = "", page = 1, limit = 20 } = req.query;
@@ -54,9 +54,6 @@ export const getPublicServices = async (req, res) => {
   }
 };
 
-// GET /api/services/:id
-// NOTE: provider_contact is deliberately excluded here — it's only revealed
-// after a booking fee is paid (see bookingController.getBookingById / pay endpoints).
 export const getPublicServiceById = async (req, res) => {
   try {
     const service = await Service.findOne({ _id: req.params.id, status: "active" })
@@ -75,7 +72,6 @@ export const getPublicServiceById = async (req, res) => {
 // ADMIN ROUTES
 // ─────────────────────────────────────────────
 
-// GET /api/services/admin/all
 export const getAllServicesAdmin = async (req, res) => {
   try {
     const { search = "", status = "all" } = req.query;
@@ -104,7 +100,6 @@ export const getAllServicesAdmin = async (req, res) => {
   }
 };
 
-// POST /api/services/admin
 export const createService = async (req, res) => {
   try {
     const {
@@ -132,11 +127,16 @@ export const createService = async (req, res) => {
       ? Number(listing_duration_days)
       : 30;
 
-    // Build image URL from uploaded file if present, else fallback to body field
-    const base      = process.env.SERVER_URL || `${req.protocol}://${req.get("host")}`;
-    const image_url = req.file
-      ? `${base}/uploads/${req.file.filename}`
-      : (req.body.image_url || "");
+    let image_url = req.body.image_url || "";
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.buffer);
+        image_url = result.secure_url;
+      } catch (uploadErr) {
+        console.error("Cloudinary upload failed (createService):", uploadErr.message);
+        return res.status(500).json({ message: "Image upload failed. Please try again." });
+      }
+    }
 
     const resolvedListingFee = listing_fee_paid !== undefined
       ? Number(listing_fee_paid)
@@ -169,7 +169,6 @@ export const createService = async (req, res) => {
   }
 };
 
-// PATCH /api/services/admin/:id
 export const updateService = async (req, res) => {
   try {
     const allowed = [
@@ -189,16 +188,19 @@ export const updateService = async (req, res) => {
       updates.listing_duration_days = ALLOWED_DURATIONS.includes(d) ? d : 30;
     }
 
-    // Nested provider_contact fields
     ["phone", "email", "whatsapp", "address"].forEach((f) => {
       const key = `provider_contact_${f}`;
       if (req.body[key] !== undefined) updates[`provider_contact.${f}`] = req.body[key];
     });
 
-    // If a new file was uploaded, override image_url
     if (req.file) {
-      const base = process.env.SERVER_URL || `${req.protocol}://${req.get("host")}`;
-      updates.image_url = `${base}/uploads/${req.file.filename}`;
+      try {
+        const result = await uploadToCloudinary(req.file.buffer);
+        updates.image_url = result.secure_url;
+      } catch (uploadErr) {
+        console.error("Cloudinary upload failed (updateService):", uploadErr.message);
+        return res.status(500).json({ message: "Image upload failed. Please try again." });
+      }
     }
 
     if (Object.keys(updates).length === 0) {
@@ -222,7 +224,6 @@ export const updateService = async (req, res) => {
   }
 };
 
-// DELETE /api/services/admin/:id
 export const deleteService = async (req, res) => {
   try {
     const service = await Service.findByIdAndDelete(req.params.id);
@@ -237,7 +238,6 @@ export const deleteService = async (req, res) => {
   }
 };
 
-// GET /api/services/admin/stats
 export const getServiceStats = async (req, res) => {
   try {
     const [agg] = await Service.aggregate([
@@ -266,7 +266,6 @@ export const getServiceStats = async (req, res) => {
   }
 };
 
-// PATCH /api/services/admin/expire-check
 export const expireListings = async (req, res) => {
   try {
     const result = await Service.updateMany(
