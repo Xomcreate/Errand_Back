@@ -1,12 +1,15 @@
 import axios from "axios";
+import crypto from "crypto";
 import Payment from "../models/Payment.js";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
 import VendorProduct from "../models/VendorProduct.js";
 import Product from "../models/Product.js";
+import AdminPayout from "../models/AdminPayout.js";
 import { calcCommissionBreakdown } from "./orderController.js";
 
 const PAYSTACK_API = "https://api.paystack.co";
+const isTestMode = process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INITIALIZE PAYSTACK PAYMENT (order checkout)
@@ -305,5 +308,274 @@ export const getVendorEarningsByAdmin = async (req, res) => {
   } catch (err) {
     console.error("ADMIN VENDOR EARNINGS ERROR:", err.message);
     res.status(500).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER — compute platform profit from Order.partyPayouts
+//
+// totalCommission     = commission earned from every vendor payout ever released
+// totalPlatformSales  = gross of every "__platform__" (admin's own items) payout released
+// totalProfit         = totalCommission + totalPlatformSales
+// totalReserved       = success + pending AdminPayout amounts (pending is reserved
+//                        so two cashouts can't both draw from the same money while
+//                        a Paystack transfer is still in flight)
+// available           = totalProfit - totalReserved
+// ─────────────────────────────────────────────────────────────────────────────
+const computePlatformProfit = async () => {
+  const [agg] = await Order.aggregate([
+    { $unwind: "$partyPayouts" },
+    {
+      $group: {
+        _id: null,
+        totalCommission: {
+          $sum: {
+            $cond: [
+              { $ne: ["$partyPayouts.partyKey", "__platform__"] },
+              { $ifNull: ["$partyPayouts.commissionAmount", 0] },
+              0,
+            ],
+          },
+        },
+        totalPlatformSales: {
+          $sum: {
+            $cond: [
+              { $eq: ["$partyPayouts.partyKey", "__platform__"] },
+              { $ifNull: ["$partyPayouts.gross", 0] },
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  const totalCommission    = agg?.totalCommission    || 0;
+  const totalPlatformSales = agg?.totalPlatformSales || 0;
+  const totalProfit        = totalCommission + totalPlatformSales;
+
+  const reservedAgg = await AdminPayout.aggregate([
+    { $match: { status: { $in: ["success", "pending"] } } },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
+  const totalReserved = reservedAgg[0]?.total || 0;
+
+  return {
+    totalCommission,
+    totalPlatformSales,
+    totalProfit,
+    totalReserved,
+    available: Math.max(0, Math.round(totalProfit - totalReserved)),
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN: GET PLATFORM PROFIT SUMMARY
+// GET /api/payments/admin/profit
+// ─────────────────────────────────────────────────────────────────────────────
+export const getPlatformProfit = async (req, res) => {
+  try {
+    if (req.user.role !== "admin")
+      return res.status(403).json({ message: "Admin only" });
+
+    const summary = await computePlatformProfit();
+
+    const history = await AdminPayout.find()
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    res.json({ success: true, summary, history });
+  } catch (err) {
+    console.error("GET PLATFORM PROFIT ERROR:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN: CASH OUT PLATFORM PROFIT (real Paystack transfer)
+// POST /api/payments/admin/cashout
+// Body: { accountNumber, bankCode, amount }  ← amount optional, defaults to full available balance
+// ─────────────────────────────────────────────────────────────────────────────
+export const cashOutProfit = async (req, res) => {
+  try {
+    if (req.user.role !== "admin")
+      return res.status(403).json({ message: "Admin only" });
+
+    const { accountNumber, bankCode } = req.body;
+    if (!accountNumber?.trim() || !bankCode?.trim())
+      return res.status(400).json({ message: "Account number and bank code are required" });
+
+    const { available } = await computePlatformProfit();
+    if (available <= 0)
+      return res.status(400).json({ message: "No profit available to cash out" });
+
+    let amount = req.body.amount != null ? Number(req.body.amount) : available;
+    if (!amount || amount <= 0)
+      return res.status(400).json({ message: "Invalid amount" });
+    if (amount > available)
+      return res.status(400).json({ message: `Amount exceeds available balance (₦${available.toLocaleString()})` });
+
+    // ── 1. Resolve account name ────────────────────────────────────────────
+    let accountName = "TEST ADMIN ACCOUNT";
+    let recipientCode = `TEST_RECIPIENT_${Date.now()}`;
+
+    if (isTestMode) {
+      console.log("⚠ Test mode: skipping Paystack verification for admin cashout");
+    } else {
+      const verify = await axios.get(
+        `${PAYSTACK_API}/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
+        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+      );
+      if (!verify.data.status)
+        return res.status(400).json({ message: "Could not verify account" });
+      accountName = verify.data.data.account_name;
+
+      // ── 2. Create a transfer recipient ─────────────────────────────────
+      const recipient = await axios.post(
+        `${PAYSTACK_API}/transferrecipient`,
+        {
+          type:           "nuban",
+          name:           accountName,
+          account_number: accountNumber,
+          bank_code:      bankCode,
+          currency:       "NGN",
+        },
+        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+      );
+      recipientCode = recipient.data.data.recipient_code;
+    }
+
+    // ── 3. Create a pending ledger row FIRST — this reserves the amount so a
+    // second concurrent cashout request can't also draw from the same balance
+    // while this Paystack transfer is in flight. ──────────────────────────
+    const reference = `ADMIN_PAYOUT_${crypto.randomUUID()}`;
+
+    const payoutRecord = await AdminPayout.create({
+      amount,
+      accountNumber,
+      accountName,
+      bankCode,
+      recipientCode,
+      reference,
+      status: "pending",
+      initiatedBy: req.user.id,
+    });
+
+    // ── 4. Initiate the transfer ───────────────────────────────────────────
+    if (isTestMode) {
+      // In test mode there's no real transfer network — mark as success directly.
+      payoutRecord.status = "success";
+      payoutRecord.transferCode = `TEST_TRANSFER_${Date.now()}`;
+      await payoutRecord.save();
+
+      return res.json({
+        success: true,
+        message: "Test-mode cashout recorded (no real transfer sent).",
+        payout: payoutRecord,
+      });
+    }
+
+    try {
+      const transfer = await axios.post(
+        `${PAYSTACK_API}/transfer`,
+        {
+          source:    "balance",
+          amount:    Math.round(amount * 100), // kobo
+          recipient: recipientCode,
+          reason:    "Platform profit withdrawal",
+          reference,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      const transferData = transfer.data.data;
+      payoutRecord.transferCode = transferData.transfer_code;
+
+      // Paystack may return status "success" immediately, or "otp"/"pending"
+      // if OTP finalization is required on your account (Settings → Preferences
+      // → disable OTP for API transfers to skip this in production).
+      if (transferData.status === "success") {
+        payoutRecord.status = "success";
+      } else {
+        payoutRecord.status = "pending"; // will be confirmed by the transfer webhook below
+      }
+      await payoutRecord.save();
+
+      res.json({
+        success: true,
+        message:
+          transferData.status === "success"
+            ? "Cashout successful — funds sent."
+            : "Transfer initiated — awaiting confirmation from Paystack.",
+        payout: payoutRecord,
+      });
+    } catch (transferErr) {
+      payoutRecord.status = "failed";
+      payoutRecord.failureReason =
+        transferErr.response?.data?.message || transferErr.message;
+      await payoutRecord.save();
+
+      console.error("ADMIN CASHOUT TRANSFER ERROR:", transferErr.response?.data || transferErr.message);
+      res.status(500).json({
+        message: "Transfer failed: " + (transferErr.response?.data?.message || transferErr.message),
+      });
+    }
+  } catch (err) {
+    console.error("CASH OUT PROFIT ERROR:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYSTACK WEBHOOK — handle transfer.success / transfer.failed / transfer.reversed
+// so pending AdminPayout rows get confirmed once Paystack finishes processing.
+//
+// If you already have a webhook route (e.g. for the checkout charge.success
+// event), just add this same block inside it — don't create two separate
+// webhook endpoints, Paystack should hit ONE URL.
+//
+// POST /api/payments/webhook
+// ─────────────────────────────────────────────────────────────────────────────
+export const handleAdminTransferWebhook = async (req, res) => {
+  try {
+    // Verify the request really came from Paystack
+    const hash = crypto
+      .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
+      .update(JSON.stringify(req.body))
+      .digest("hex");
+
+    if (hash !== req.headers["x-paystack-signature"]) {
+      return res.status(401).end();
+    }
+
+    const event = req.body;
+
+    if (
+      event.event === "transfer.success" ||
+      event.event === "transfer.failed" ||
+      event.event === "transfer.reversed"
+    ) {
+      const reference = event.data?.reference;
+      const payout = await AdminPayout.findOne({ reference });
+      if (payout) {
+        if (event.event === "transfer.success") payout.status = "success";
+        if (event.event === "transfer.failed") {
+          payout.status = "failed";
+          payout.failureReason = event.data?.reason || "Transfer failed";
+        }
+        if (event.event === "transfer.reversed") payout.status = "reversed";
+        await payout.save();
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("ADMIN TRANSFER WEBHOOK ERROR:", err.message);
+    res.sendStatus(200); // always 200 so Paystack doesn't retry endlessly
   }
 };

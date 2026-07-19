@@ -862,6 +862,9 @@ export const customerConfirmReceived = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN: RELEASE PAYMENT
+// ── CHANGED: the "__platform__" party no longer needs bank details at release
+// time. Platform revenue now pools into the shared profit ledger and is cashed
+// out separately via releasePlatformProfit's admin/cashout endpoint. ──────────
 // ─────────────────────────────────────────────────────────────────────────────
 export const releaseVendorPayment = async (req, res) => {
   try {
@@ -875,15 +878,6 @@ export const releaseVendorPayment = async (req, res) => {
 
     if (!partyKey)
       return res.status(400).json({ message: "partyKey is required" });
-
-    if (partyKey === "__platform__") {
-      if (!accountNumber?.trim())
-        return res.status(400).json({ message: "Account number is required for platform payout" });
-      if (!bankCode?.trim())
-        return res.status(400).json({ message: "Bank code is required for platform payout" });
-      if (!accountName?.trim())
-        return res.status(400).json({ message: "Account must be verified before releasing payment" });
-    }
 
     if (!partyIsConfirmed(order, partyKey))
       return res.status(400).json({ message: "Customer has not yet confirmed receipt for this seller's items" });
