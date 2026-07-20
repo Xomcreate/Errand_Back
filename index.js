@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import helmet from "helmet"; // ← ADD THIS
 import connectDB from "./dbconnect/dbconfig.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -28,7 +29,7 @@ import serviceRoutes from "./routes/serviceRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 
 import { errorHandler } from "./middleware/errorMiddleware.js";
-import { authLimiter, paymentLimiter } from "./middleware/rateLimiters.js"; // ← ADD THIS (save your limiter file here, or adjust path)
+import { authLimiter, paymentLimiter } from "./middleware/rateLimiters.js";
 
 dotenv.config();
 
@@ -40,7 +41,10 @@ const __dirname  = path.dirname(__filename);
 
 connectDB();
 
+app.set("trust proxy", 1); // ← ADD THIS (needed for rate-limit to see real client IP behind Render/host proxy)
+
 // ── Middleware ────────────────────────────────────────────────────────────────
+app.use(helmet()); // ← ADD THIS (sets secure HTTP headers)
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -48,7 +52,7 @@ app.use(cookieParser());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use("/api/auth",            authLimiter, authRoutes);       // ← rate limited
+app.use("/api/auth",            authLimiter, authRoutes);
 app.use("/api/contacts",        contactRoutes);
 app.use("/api/insider",         insiderRoutes);
 app.use("/api/seller",          sellerInquiryRoutes);
@@ -60,7 +64,7 @@ app.use("/api/newsletter",      newsletterRoutes);
 app.use("/api/referrals",       referralRoutes);
 app.use("/api/wallet",          walletRoutes);
 app.use("/api/orders",          orderRoutes);
-app.use("/api/payments",        paymentLimiter, paymentRoutes); // ← rate limited
+app.use("/api/payments",        paymentLimiter, paymentRoutes);
 app.use("/api/services",        serviceRoutes);
 app.use("/api/bookings",        bookingRoutes);
 app.use("/api/vendor-products", vendorProductRoutes);
