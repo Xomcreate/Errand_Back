@@ -16,7 +16,7 @@ import authRoutes from "./routes/authRoutes.js";
 import wishlistRoutes from "./routes/wishlistRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
-import walletRoutes from "./routes/walletRoutes.js"; // ← ADD THIS
+import walletRoutes from "./routes/walletRoutes.js";
 import vendorProductRoutes from "./routes/vendorProductRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import orderRoutes from "./routes/OrderRoutes.js";
@@ -28,6 +28,7 @@ import serviceRoutes from "./routes/serviceRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 
 import { errorHandler } from "./middleware/errorMiddleware.js";
+import { authLimiter, paymentLimiter } from "./middleware/rateLimiters.js"; // ← ADD THIS (save your limiter file here, or adjust path)
 
 dotenv.config();
 
@@ -47,7 +48,7 @@ app.use(cookieParser());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use("/api/auth",            authRoutes);
+app.use("/api/auth",            authLimiter, authRoutes);       // ← rate limited
 app.use("/api/contacts",        contactRoutes);
 app.use("/api/insider",         insiderRoutes);
 app.use("/api/seller",          sellerInquiryRoutes);
@@ -57,11 +58,11 @@ app.use("/api/reviews",         reviewRoutes);
 app.use("/api/vendor-reviews",  vendorReviewRoutes);
 app.use("/api/newsletter",      newsletterRoutes);
 app.use("/api/referrals",       referralRoutes);
-app.use("/api/wallet",          walletRoutes);  // ← ADD THIS
+app.use("/api/wallet",          walletRoutes);
 app.use("/api/orders",          orderRoutes);
-app.use("/api/payments",        paymentRoutes);
-app.use("/api/services", serviceRoutes);
-app.use("/api/bookings", bookingRoutes);
+app.use("/api/payments",        paymentLimiter, paymentRoutes); // ← rate limited
+app.use("/api/services",        serviceRoutes);
+app.use("/api/bookings",        bookingRoutes);
 app.use("/api/vendor-products", vendorProductRoutes);
 app.use("/api/vendor-plan",     vendorPlanRoutes);
 app.use("/api/notifications",   notificationRoutes);
