@@ -10,11 +10,6 @@ import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 const generateToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-// Roles a user is allowed to self-assign at signup.
-// "admin" (and any future privileged role) must NEVER be reachable from here —
-// admin accounts should only be created directly in the DB or by another admin.
-const ALLOWED_SELF_SIGNUP_ROLES = ["buyer", "vendor"];
-
 // ---------------------- REGISTER ----------------------
 export const registerUser = async (req, res, next) => {
   try {
@@ -29,19 +24,15 @@ export const registerUser = async (req, res, next) => {
     if (role === "buyer" && password !== confirmPassword)
       return res.status(400).json({ message: "Passwords do not match" });
 
-    // SECURITY: never trust `role` from the client directly — otherwise anyone
-    // can POST { role: "admin" } and grant themselves admin access.
-    const safeRole = ALLOWED_SELF_SIGNUP_ROLES.includes(role) ? role : "buyer";
-
-    const existingUser = await User.findOne({ email: email?.toLowerCase() });
+    const existingUser = await User.findOne({ email });
     if (existingUser)
       return res.status(400).json({ message: "Email already registered" });
 
     const user = await User.create({
-      role: safeRole,
+      role,
       name,
       storeName,
-      email: email?.toLowerCase(),
+      email,
       phone,
       address,
       categories: categories
@@ -50,8 +41,10 @@ export const registerUser = async (req, res, next) => {
       password,
     });
 
-    // Token on register so the frontend can immediately call
+    // FIX — return a token on register so the frontend can immediately call
     // POST /referrals/register (which requires auth) without a separate login.
+    // Without this token, referral documents are never created and wallets
+    // are never funded.
     const token = generateToken(user._id, user.role);
 
     res.status(201).json({
@@ -106,18 +99,17 @@ export const loginUser = async (req, res, next) => {
   }
 };
 
-// ---------------------- GET ALL USERS (admin) ----------------------
+// ---------------------- GET ALL USERS ----------------------
 export const getAllUsers = async (req, res, next) => {
   try {
-    // SECURITY: always exclude password hashes from any list/response.
-    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    const users = await User.find().sort({ createdAt: -1 });
     res.status(200).json({ users });
   } catch (error) {
     next(error);
   }
 };
 
-// ---------------------- DELETE USER (admin) ----------------------
+// ---------------------- DELETE USER ----------------------
 export const deleteUser = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -128,13 +120,7 @@ export const deleteUser = async (req, res, next) => {
   }
 };
 
-// ---------------------- RESET PASSWORD (admin) ----------------------
-// NOTE: this currently returns the new plaintext password directly in the API
-// response. That's workable for an admin tool but means anyone who can call
-// this route (now locked to `protect + admin`) gets a working password for
-// the target account back in the JSON body. Consider instead emailing the
-// new password to the user's registered email, or issuing a reset link,
-// rather than returning it in the response — flagging for your call.
+// ---------------------- RESET PASSWORD ----------------------
 export const resetPassword = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -147,7 +133,7 @@ export const resetPassword = async (req, res, next) => {
   }
 };
 
-// ---------------------- TOGGLE STATUS (admin) ----------------------
+// ---------------------- TOGGLE STATUS ----------------------
 export const toggleStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -167,14 +153,6 @@ export const toggleStatus = async (req, res, next) => {
 export const updateProfile = async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    // SECURITY: without this check, any logged-in user could edit ANY other
-    // user's profile just by changing the :id in the URL (IDOR). Only the
-    // account owner or an admin may proceed.
-    if (req.user.id !== id && req.user.role !== "admin") {
-      return res.status(403).json({ message: "Not authorized to update this profile" });
-    }
-
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -223,7 +201,7 @@ export const updateProfile = async (req, res, next) => {
   }
 };
 
-// ---------------------- TOGGLE VERIFICATION (admin) ----------------------
+// ---------------------- TOGGLE VERIFICATION ----------------------
 // Manual override — kept for cases where an admin wants to verify/unverify
 // a vendor outside of the KYC flow (e.g. legacy vendors onboarded before KYC).
 export const toggleVerification = async (req, res, next) => {
