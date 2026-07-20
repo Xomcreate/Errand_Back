@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../middleware/authMiddleware.js";
+import { protect, admin } from "../middleware/authMiddleware.js";
 import {
   registerUser,
   loginUser,
@@ -20,24 +20,26 @@ import {
 } from "../controllers/authController.js";
 import { upload } from "../middleware/upload.js";
 
-
-
 const router = express.Router();
 
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 
-// Users management
-router.get("/users", getAllUsers);
+// Users management — admin only
+router.get("/users", protect, admin, getAllUsers);
+router.delete("/users/:id", protect, admin, deleteUser);
+router.post("/users/:id/reset-password", protect, admin, resetPassword);
+router.patch("/users/:id/toggle-status", protect, admin, toggleStatus);
+router.patch("/users/:id/toggle-verify", protect, admin, toggleVerification);
+router.get("/users/:id/bank-details", protect, admin, getVendorBankDetails);
+
+// Bank details — logged-in user acting on their own account
 router.get("/banks", protect, getBanksList);
 router.post("/bank-details", protect, saveBankDetails);
 router.get("/verify-account", protect, verifyBankAccount);
-router.get("/users/:id/bank-details", protect, getVendorBankDetails); // admin: read vendor's saved payout account
-router.delete("/users/:id", deleteUser);
+
 router.get("/me", protect, getMe);
-router.post("/users/:id/reset-password", resetPassword);
-router.patch("/users/:id/toggle-status", toggleStatus);
-router.patch("/users/:id/toggle-verify", toggleVerification);
+
 router.put(
   "/users/:id",
   protect,
@@ -55,8 +57,7 @@ router.post(
   ]),
   submitKyc
 );
-router.get("/kyc/pending", protect, getPendingKyc);
-router.patch("/users/:id/kyc-review", protect, reviewKyc);
-
+router.get("/kyc/pending", protect, admin, getPendingKyc);
+router.patch("/users/:id/kyc-review", protect, admin, reviewKyc);
 
 export default router;
