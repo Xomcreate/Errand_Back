@@ -11,141 +11,12 @@ import { calcCommissionBreakdown } from "./orderController.js";
 const PAYSTACK_API = "https://api.paystack.co";
 const isTestMode = process.env.PAYSTACK_SECRET_KEY?.startsWith("sk_test");
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INITIALIZE PAYSTACK PAYMENT (order checkout)
-// POST /api/payments/paystack
-// Body: { orderId }
-// ─────────────────────────────────────────────────────────────────────────────
-export const initializePaystackPayment = async (req, res) => {
-  try {
-    const { orderId } = req.body;
-    const userId = req.user.id;
-
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    if (order.user.toString() !== userId)
-      return res.status(403).json({ message: "Not your order" });
-
-    if (order.paymentStatus === "paid")
-      return res.status(400).json({ message: "Order already paid" });
-
-    const user = await User.findById(userId).select("name email");
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const callbackUrl =
-      process.env.NODE_ENV === "production"
-        ? "https://your-production-domain.com/verify/payment"
-        : "http://localhost:5173/verify/payment";
-
-    const response = await axios.post(
-      `${PAYSTACK_API}/transaction/initialize`,
-      {
-        email: user.email,
-        amount: Math.round(order.totalAmount * 100), // kobo
-        metadata: {
-          orderId: orderId.toString(),
-          userId: userId.toString(),
-        },
-        callback_url: callbackUrl,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const { authorization_url, reference } = response.data.data;
-
-    // Save a pending payment record
-    await Payment.create({
-      userId,
-      orderId,
-      reference,
-      amount: order.totalAmount,
-      status: "pending",
-      type: "payment",
-    });
-
-    res.json({ success: true, authorization_url, reference });
-  } catch (err) {
-    console.error("INIT PAYMENT ERROR:", err.response?.data || err.message);
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VERIFY PAYSTACK PAYMENT (order checkout)
-// GET /api/payments/paystack/verify/:reference
-// ─────────────────────────────────────────────────────────────────────────────
-export const verifyPaystackPayment = async (req, res) => {
-  try {
-    const { reference } = req.params;
-
-    // Prevent double-processing
-    const existingPayment = await Payment.findOne({ reference });
-    if (existingPayment?.status === "success") {
-      const order = await Order.findById(existingPayment.orderId);
-      return res.json({ success: true, message: "Already paid", order });
-    }
-
-    // Verify with Paystack
-    const response = await axios.get(
-      `${PAYSTACK_API}/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        },
-      }
-    );
-
-    const data = response.data.data;
-
-    if (data.status !== "success") {
-      return res.status(400).json({ message: "Payment not successful" });
-    }
-
-    const { orderId, userId } = data.metadata;
-
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    // Amount check — Paystack returns amount in kobo
-    const paidAmount = data.amount / 100;
-    if (Math.round(paidAmount) !== Math.round(order.totalAmount)) {
-      return res.status(400).json({ message: "Amount mismatch" });
-    }
-
-    // Mark order as paid
-    order.paymentStatus = "paid";
-    order.status = "paid";
-    order.paidAt = new Date();
-    order.paystackReference = reference;
-    await order.save();
-
-    // Update or create payment record
-    await Payment.findOneAndUpdate(
-      { reference },
-      {
-        userId,
-        orderId,
-        reference,
-        amount: paidAmount,
-        status: "success",
-        type: "payment",
-        paidAt: new Date(),
-      },
-      { upsert: true, new: true }
-    );
-
-    res.json({ success: true, order });
-  } catch (err) {
-    console.error("VERIFY PAYMENT ERROR:", err.response?.data || err.message);
-    res.status(500).json({ message: err.message });
-  }
-};
+// NOTE: checkout initialization + verification (initPaystackPayment,
+// verifyPaystackPayment) live in paystackController.js and are the ones
+// actually wired to routes. The old duplicate versions that used to live
+// here were never routed (dead code) and used a slightly different Payment
+// shape (type: "payment" vs "sale") — removed to avoid two divergent
+// sources of truth for payment records.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN: GET ALL PAYMENTS
@@ -395,6 +266,10 @@ export const getPlatformProfit = async (req, res) => {
 // ADMIN: CASH OUT PLATFORM PROFIT (real Paystack transfer)
 // POST /api/payments/admin/cashout
 // Body: { accountNumber, bankCode, amount }  ← amount optional, defaults to full available balance
+//
+// IMPORTANT — now that you're on sk_live_, isTestMode is false, so this
+// makes a REAL bank transfer of REAL money. Double-check accountNumber /
+// bankCode handling on the frontend before this goes live.
 // ─────────────────────────────────────────────────────────────────────────────
 export const cashOutProfit = async (req, res) => {
   try {
@@ -540,20 +415,37 @@ export const cashOutProfit = async (req, res) => {
 // webhook endpoints, Paystack should hit ONE URL.
 //
 // POST /api/payments/webhook
+//
+// FIXED: this route uses express.raw({ type: "application/json" }) in
+// paymentRoutes.js, which means req.body arrives here as a raw Buffer, NOT
+// a parsed object. The signature MUST be computed over those exact raw
+// bytes — hashing JSON.stringify(req.body) (which stringifies the Buffer
+// itself, not its contents) produced a hash that could never match
+// Paystack's, so every webhook call was silently rejected with 401 and
+// pending payouts never got confirmed. Fixed by hashing the raw buffer
+// directly, then parsing it to JSON afterward for the event data.
 // ─────────────────────────────────────────────────────────────────────────────
 export const handleAdminTransferWebhook = async (req, res) => {
   try {
-    // Verify the request really came from Paystack
+    // req.body is a raw Buffer here (see express.raw() in the route) —
+    // hash it directly, don't JSON.stringify it first.
     const hash = crypto
       .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
-      .update(JSON.stringify(req.body))
+      .update(req.body)
       .digest("hex");
 
     if (hash !== req.headers["x-paystack-signature"]) {
+      console.warn("PAYSTACK WEBHOOK: signature mismatch — rejecting");
       return res.status(401).end();
     }
 
-    const event = req.body;
+    let event;
+    try {
+      event = JSON.parse(req.body.toString("utf8"));
+    } catch (parseErr) {
+      console.error("PAYSTACK WEBHOOK: failed to parse body", parseErr.message);
+      return res.sendStatus(200); // ack anyway so Paystack doesn't retry forever
+    }
 
     if (
       event.event === "transfer.success" ||
@@ -570,6 +462,8 @@ export const handleAdminTransferWebhook = async (req, res) => {
         }
         if (event.event === "transfer.reversed") payout.status = "reversed";
         await payout.save();
+      } else {
+        console.warn(`PAYSTACK WEBHOOK: no AdminPayout found for reference ${reference}`);
       }
     }
 

@@ -69,6 +69,7 @@ app.use("/api/jobs",            jobRoutes);
 
 // ── Test route ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Backend working!"));
+console.log("Paystack key in use:", process.env.PAYSTACK_SECRET_KEY?.slice(0, 12));
 
 // ── Error handler (must be last) ──────────────────────────────────────────────
 app.use(errorHandler);
