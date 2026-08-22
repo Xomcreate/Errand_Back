@@ -1,6 +1,7 @@
 import Booking from "../models/Booking.js";
 import Service from "../models/Service.js";
 import User from "../models/User.js";
+import { initCryptoPaymentForBooking } from "./cryptoController.js";
 
 // ─────────────────────────────────────────────
 // PUBLIC: Customer creates a booking request
@@ -126,9 +127,15 @@ export const payBookingWithPaystack = async (req, res) => {
 };
 
 // POST /api/bookings/:id/pay/crypto
+// Delegates to cryptoController's shared NOWPayments logic so orders and
+// bookings go through the exact same create/poll/IPN pipeline.
 export const payBookingWithCrypto = async (req, res) => {
   try {
     const { currency } = req.body;
+    if (!currency) {
+      return res.status(400).json({ message: "currency is required." });
+    }
+
     const booking = await Booking.findById(req.params.id).populate("service");
     if (!booking) return res.status(404).json({ message: "Booking not found." });
     if (booking.payment_status === "paid") {
@@ -136,42 +143,25 @@ export const payBookingWithCrypto = async (req, res) => {
     }
 
     booking.payment_method  = "crypto";
-    booking.crypto_currency = currency || "btc";
+    booking.crypto_currency = currency;
     await booking.save();
 
-    // ── Plug in your crypto processor here to generate wallet_address + amount_crypto ──
-    // Example with NOWPayments, CoinGate, etc:
-    // const cryptoRes = await fetch("https://api.nowpayments.io/v1/payment", {
-    //   method: "POST",
-    //   headers: {
-    //     "x-api-key": process.env.NOWPAYMENTS_API_KEY,
-    //     "Content-Type": "application/json",
-    //   },
-    //   body: JSON.stringify({
-    //     price_amount:      booking.booking_fee_amount,
-    //     price_currency:    "ngn",
-    //     pay_currency:      currency || "btc",
-    //     order_id:          booking._id.toString(),
-    //     order_description: `ShopSquare booking fee`,
-    //   }),
-    // });
-    // const cryptoData = await cryptoRes.json();
-    // return res.json({
-    //   booking_id:     booking._id,
-    //   currency:       booking.crypto_currency,
-    //   amount_ngn:     booking.booking_fee_amount,
-    //   wallet_address: cryptoData.pay_address,
-    //   amount_crypto:  cryptoData.pay_amount,
-    //   reference:      cryptoData.payment_id,
-    // });
+    const { payment } = await initCryptoPaymentForBooking({
+      booking,
+      userId: req.user._id,
+      currency,
+    });
 
+    // Shaped to match what the frontend expects (and to carry payment._id
+    // so it can poll GET /payments/crypto/:id/status)
     res.json({
+      _id:            payment._id,
       booking_id:     booking._id,
-      currency:       booking.crypto_currency,
-      amount_ngn:     booking.booking_fee_amount,
-      wallet_address: null,   // replace with real address from your crypto processor
-      amount_crypto:  null,   // replace with real amount from your crypto processor
-      reference:      booking._id.toString(),
+      currency:       payment.currency,
+      amount_ngn:     payment.priceAmountNGN,
+      wallet_address: payment.payAddress,
+      amount_crypto:  payment.payAmount,
+      reference:      payment.nowPaymentId,
     });
   } catch (err) {
     console.error("payBookingWithCrypto:", err);
@@ -228,6 +218,14 @@ export const payBookingWithWallet = async (req, res) => {
 };
 
 // POST /api/bookings/verify-payment
+// NOTE: this now only ever handles Paystack. Crypto bookings are marked
+// paid exclusively by cryptoController's applyStatusUpdate(), triggered by
+// the NOWPayments IPN webhook (or the status-poll fallback) — never by a
+// client-submitted reference. There is intentionally no crypto branch here
+// anymore: the old version fell through both the Paystack check and a
+// commented-out crypto check straight to marking the booking paid, which
+// meant any string typed into the "transaction hash" field would confirm
+// the booking with zero on-chain verification.
 export const verifyBookingPayment = async (req, res) => {
   try {
     const { booking_id, payment_reference, payment_channel } = req.body;
@@ -247,49 +245,38 @@ export const verifyBookingPayment = async (req, res) => {
       });
     }
 
-    // ── Paystack verification ─────────────────────────────────────────────────
-    if (payment_channel === "paystack" || booking.payment_method === "paystack") {
-      if (!process.env.PAYSTACK_SECRET_KEY) {
-        return res.status(500).json({ message: "Paystack is not configured on this server." });
-      }
-
-      const paystackRes = await fetch(
-        `https://api.paystack.co/transaction/verify/${payment_reference}`,
-        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-      );
-      const paystackData = await paystackRes.json();
-
-      if (!paystackData.status || paystackData.data.status !== "success") {
-        return res.status(400).json({
-          message: paystackData.message || "Paystack payment verification failed.",
-        });
-      }
-
-      const amountPaidKobo = paystackData.data.amount;
-      if (amountPaidKobo < booking.booking_fee_amount * 100) {
-        return res.status(400).json({
-          message: `Amount paid (₦${amountPaidKobo / 100}) does not match booking fee (₦${booking.booking_fee_amount}).`,
-        });
-      }
+    if (payment_channel !== "paystack" && booking.payment_method !== "paystack") {
+      return res.status(400).json({
+        message: "This payment method is confirmed automatically and cannot be verified manually.",
+      });
     }
 
-    // ── Crypto verification ───────────────────────────────────────────────────
-    // Add your crypto processor's webhook/confirmation check here.
-    // Example with NOWPayments:
-    // if (payment_channel === "crypto" || booking.payment_method === "crypto") {
-    //   const cryptoRes  = await fetch(
-    //     `https://api.nowpayments.io/v1/payment/${payment_reference}`,
-    //     { headers: { "x-api-key": process.env.NOWPAYMENTS_API_KEY } }
-    //   );
-    //   const cryptoData = await cryptoRes.json();
-    //   if (cryptoData.payment_status !== "finished" && cryptoData.payment_status !== "confirmed") {
-    //     return res.status(400).json({ message: "Crypto payment not yet confirmed on-chain." });
-    //   }
-    // }
+    if (!process.env.PAYSTACK_SECRET_KEY) {
+      return res.status(500).json({ message: "Paystack is not configured on this server." });
+    }
+
+    const paystackRes = await fetch(
+      `https://api.paystack.co/transaction/verify/${payment_reference}`,
+      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    );
+    const paystackData = await paystackRes.json();
+
+    if (!paystackData.status || paystackData.data.status !== "success") {
+      return res.status(400).json({
+        message: paystackData.message || "Paystack payment verification failed.",
+      });
+    }
+
+    const amountPaidKobo = paystackData.data.amount;
+    if (amountPaidKobo < booking.booking_fee_amount * 100) {
+      return res.status(400).json({
+        message: `Amount paid (₦${amountPaidKobo / 100}) does not match booking fee (₦${booking.booking_fee_amount}).`,
+      });
+    }
 
     booking.payment_status           = "paid";
     booking.payment_reference        = payment_reference;
-    booking.payment_channel          = payment_channel || "";
+    booking.payment_channel          = payment_channel || "paystack";
     booking.status                   = "confirmed";
     booking.forwarded_to_provider_at = new Date();
     await booking.save();
