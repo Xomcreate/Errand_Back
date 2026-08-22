@@ -146,9 +146,13 @@ export const payBookingWithCrypto = async (req, res) => {
     booking.crypto_currency = currency;
     await booking.save();
 
+    // NOTE: bookings are guest checkout (see createBooking — no auth
+    // required), unlike order checkout which requires a logged-in user.
+    // req.user may not exist here at all, so it's only passed through if
+    // present rather than assumed.
     const { payment } = await initCryptoPaymentForBooking({
       booking,
-      userId: req.user._id,
+      userId: req.user?._id,
       currency,
     });
 

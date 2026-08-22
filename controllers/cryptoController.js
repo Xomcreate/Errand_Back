@@ -69,7 +69,7 @@ async function createCryptoPayment({
     targetType,
     targetModel,
     targetId,
-    user: userId,
+    ...(userId ? { user: userId } : {}), // omitted entirely for guest bookings
     currency: currency.toLowerCase(),
     nowPaymentId: String(data.payment_id),
     nowOrderId,
@@ -153,7 +153,10 @@ export const getCryptoPaymentStatus = async (req, res) => {
     if (!payment) {
       return res.status(404).json({ message: "Payment not found" });
     }
-    if (payment.user.toString() !== req.user._id.toString()) {
+    // Order payments always have a user — enforce ownership. Booking
+    // payments are guest checkout and have no user at all, so there's
+    // nothing to check; the unguessable payment _id is the access control.
+    if (payment.user && (!req.user || payment.user.toString() !== req.user._id.toString())) {
       return res.status(403).json({ message: "Not authorized" });
     }
 

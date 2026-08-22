@@ -93,7 +93,7 @@ app.use("/api/jobs",            jobRoutes);
 // and /ipn together, so mounting the router again here is what actually
 // wires up /init and /status. The raw-body middleware above only applies
 // to the /ipn sub-path specifically, so this is safe.
-app.use("/payments/crypto", cryptoRoutes);
+app.use("/api/payments/crypto", cryptoRoutes);
 
 // ── Test route ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("Backend working!"));

@@ -22,10 +22,14 @@ const cryptoPaymentSchema = new mongoose.Schema(
       enum: ["Order", "Booking"],
     },
 
+    // Optional — order payments always have a logged-in user, but booking
+    // payments are a guest checkout flow (see createBooking) with no
+    // req.user at all. Never assume this is populated when targetType is
+    // "booking".
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
     },
     currency: {
       type: String, // btc, eth, usdt, usdc, bnb, sol, ltc, trx, doge, xrp
