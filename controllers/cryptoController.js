@@ -23,11 +23,15 @@ const SETTLED_STATUSES = ["finished"];
 // since those are single-chain and their plain ticker is valid).
 //
 // The frontend COIN_INFO keys (btc, eth, usdt, usdc, bnb, sol, ltc,
-// trx, doge, xrp) don't need to change — this map translates the
+// trx, doge, xrp, ton) don't need to change — this map translates the
 // internal key to whatever NOWPayments actually expects as
 // `pay_currency`. Defaults below pick one network per coin (cheapest/
 // most common); swap these if you want a different default network,
 // or extend to let the user choose a network per coin.
+//
+// "ton" — Toncoin, native TON blockchain. This is what's commonly
+// referred to as "Gram" (the original Telegram/TON token that was
+// cancelled pre-launch and never issued; TON is its successor).
 // ─────────────────────────────────────────────
 const NOWPAYMENTS_CURRENCY_MAP = {
   btc: "btc",
@@ -40,6 +44,7 @@ const NOWPAYMENTS_CURRENCY_MAP = {
   trx: "trx",
   doge: "doge",
   xrp: "xrp",
+  ton: "ton", // NEW — Toncoin ("Gram")
 };
 
 // ─────────────────────────────────────────────
