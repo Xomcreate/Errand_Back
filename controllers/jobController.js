@@ -1,6 +1,26 @@
 import Job from "../models/Job.js";
 import Application from "../models/Application.js";
 import nodemailer from "nodemailer";
+import cloudinary from "../config/cloudinary.js";
+import streamifier from "streamifier"; // npm install streamifier
+
+// Helper: upload a memory buffer to Cloudinary and resolve with the result
+const uploadBufferToCloudinary = (buffer, originalname) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "cv-uploads",
+        resource_type: "auto", // critical: "auto" lets pdf/doc/docx upload correctly
+        public_id: originalname.replace(/\.[^/.]+$/, ""),
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(uploadStream);
+  });
+};
 
 // ================= CREATE JOB =================
 export const createJob = async (req, res) => {
@@ -47,23 +67,42 @@ export const deleteJob = async (req, res) => {
 
 // ================= APPLY JOB =================
 export const applyJob = async (req, res) => {
+  let applicationSaved = false;
+
   try {
     const { jobId, fullName, email, phone, coverLetter } = req.body;
- 
+
     if (!jobId || !fullName || !email) {
       return res.status(400).json({ message: "Missing required fields" });
     }
- 
+
     const job = await Job.findById(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
- 
+
     if (!job.email) {
       return res.status(400).json({ message: "Job owner email is missing" });
     }
- 
-    // ================= CV FILE =================
-    const cvFile = req.file || null;
- 
+
+    // ================= CV FILE: upload buffer to Cloudinary =================
+    let cvUrl = null;
+    let cvOriginalName = null;
+
+    if (req.file) {
+      try {
+        const result = await uploadBufferToCloudinary(
+          req.file.buffer,
+          req.file.originalname
+        );
+        cvUrl = result.secure_url;
+        cvOriginalName = req.file.originalname;
+      } catch (uploadErr) {
+        console.error("Cloudinary upload failed:", uploadErr);
+        return res
+          .status(500)
+          .json({ message: "CV upload failed. Please try again." });
+      }
+    }
+
     // ================= SAVE APPLICATION =================
     await Application.create({
       jobId,
@@ -71,62 +110,64 @@ export const applyJob = async (req, res) => {
       email,
       phone,
       coverLetter,
-      cvFile: cvFile ? cvFile.path : null,
+      cvFile: cvUrl,
     });
- 
-    // ================= EMAIL SETUP =================
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_APP_PASSWORD,
-      },
-    });
- 
-    // ✅ Attach the actual file to the email — works locally AND in production
-    const attachments = cvFile
-      ? [{ filename: cvFile.originalname, path: cvFile.path }]
-      : [];
- 
-    // ================= EMAIL TO EMPLOYER =================
-    await transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: job.email,
-      subject: `New Application - ${job.title}`,
-      attachments,
-      html: `
-        <h2>New Job Application</h2>
-        <p><b>Job:</b> ${job.title}</p>
-        <p><b>Name:</b> ${fullName}</p>
-        <p><b>Email:</b> ${email}</p>
-        <p><b>Phone:</b> ${phone || "N/A"}</p>
-        <p><b>Cover Letter:</b> ${coverLetter || "N/A"}</p>
-        <p>${cvFile ? "✅ CV is attached to this email." : "No CV uploaded."}</p>
-      `,
-    });
- 
-    // ================= EMAIL TO YOURSELF =================
-    await transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: process.env.GMAIL_USER,
-      subject: "New Job Application Alert",
-      attachments,
-      html: `
-        <h3>New Applicant</h3>
-        <p><b>Name:</b> ${fullName}</p>
-        <p><b>Job:</b> ${job.title}</p>
-        <p>${cvFile ? "✅ CV is attached to this email." : "No CV uploaded."}</p>
-      `,
-    });
- 
-    // ================= UPDATE APPLICANT COUNT =================
+    applicationSaved = true;
+
     job.applicants += 1;
     await job.save();
- 
+
     res.json({ message: "Application submitted successfully" });
+
+    // ================= EMAIL (fire-and-forget) =================
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.GMAIL_USER,
+          pass: process.env.GMAIL_APP_PASSWORD,
+        },
+      });
+
+      const attachments = req.file
+        ? [{ filename: req.file.originalname, content: req.file.buffer }]
+        : [];
+
+      await transporter.sendMail({
+        from: process.env.GMAIL_USER,
+        to: job.email,
+        subject: `New Application - ${job.title}`,
+        attachments,
+        html: `
+          <h2>New Job Application</h2>
+          <p><b>Job:</b> ${job.title}</p>
+          <p><b>Name:</b> ${fullName}</p>
+          <p><b>Email:</b> ${email}</p>
+          <p><b>Phone:</b> ${phone || "N/A"}</p>
+          <p><b>Cover Letter:</b> ${coverLetter || "N/A"}</p>
+          <p>${cvUrl ? `✅ CV: <a href="${cvUrl}">${cvOriginalName}</a>` : "No CV uploaded."}</p>
+        `,
+      });
+
+      await transporter.sendMail({
+        from: process.env.GMAIL_USER,
+        to: process.env.GMAIL_USER,
+        subject: "New Job Application Alert",
+        attachments,
+        html: `
+          <h3>New Applicant</h3>
+          <p><b>Name:</b> ${fullName}</p>
+          <p><b>Job:</b> ${job.title}</p>
+          <p>${cvUrl ? `✅ CV: <a href="${cvUrl}">${cvOriginalName}</a>` : "No CV uploaded."}</p>
+        `,
+      });
+    } catch (emailErr) {
+      console.error("Apply job - email send failed:", emailErr.message);
+    }
   } catch (err) {
     console.error("Apply job error:", err);
-    res.status(500).json({ message: err.message });
+    if (!applicationSaved) {
+      res.status(500).json({ message: err.message });
+    }
   }
 };
- 
