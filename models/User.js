@@ -67,6 +67,16 @@ const userSchema = new mongoose.Schema(
     // FIX: was missing — getMyReferralLink falls back to user._id if this is
     // absent, but having it as a proper field allows custom codes and indexing.
     referralCode: { type: String, default: "" },
+
+    // ── Terms & Conditions ──────────────────────────────────────────────────
+    // Captured at registration. agreedToTerms must be true to create an
+    // account (enforced in the controller). termsVersion records which
+    // version of the T&Cs the user agreed to, so you can tell who needs to
+    // re-accept if the terms change later. agreedAt gives you an auditable
+    // timestamp for disputes.
+    agreedToTerms: { type: Boolean, required: true, default: false },
+    termsVersion:  { type: String, default: "" },
+    agreedAt:      { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -16,6 +16,7 @@ export const registerUser = async (req, res, next) => {
     const {
       role, name, storeName, email, phone,
       address, categories, password, confirmPassword,
+      agreedToTerms, termsVersion,
     } = req.body;
 
     if (!password || password.length < 8)
@@ -23,6 +24,11 @@ export const registerUser = async (req, res, next) => {
 
     if (role === "buyer" && password !== confirmPassword)
       return res.status(400).json({ message: "Passwords do not match" });
+
+    // Terms & Conditions must be explicitly agreed to at registration.
+    // Accept boolean true or the string "true" (in case of form-data/multipart).
+    if (agreedToTerms !== true && agreedToTerms !== "true")
+      return res.status(400).json({ message: "You must agree to the Terms & Conditions" });
 
     const existingUser = await User.findOne({ email });
     if (existingUser)
@@ -39,6 +45,9 @@ export const registerUser = async (req, res, next) => {
         ? Array.isArray(categories) ? categories : [categories]
         : ["General"],
       password,
+      agreedToTerms: true,
+      termsVersion:  termsVersion || "",
+      agreedAt:      new Date(),
     });
 
     // FIX — return a token on register so the frontend can immediately call
