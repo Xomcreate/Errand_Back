@@ -31,9 +31,23 @@ const cryptoPaymentSchema = new mongoose.Schema(
       ref: "User",
       required: false,
     },
+
+    // Internal/frontend-facing coin key: btc, eth, usdt, usdc, bnb, sol,
+    // ltc, trx, doge, xrp. This is what the checkout UI sends and what
+    // "existing open payment" lookups match on.
     currency: {
-      type: String, // btc, eth, usdt, usdc, bnb, sol, ltc, trx, doge, xrp
+      type: String,
       required: true,
+    },
+
+    // NEW — the exact network-qualified code actually sent to NOWPayments
+    // as `pay_currency` (e.g. "usdttrc20", "bnbbsc"). Kept separate from
+    // `currency` since multi-chain coins map 1-to-many; this records
+    // which network was actually used for this specific deposit address,
+    // which matters if you ever support multiple networks per coin.
+    currencyNetwork: {
+      type: String,
+      required: false,
     },
 
     // ── NOWPayments identifiers ──────────────────────────────────────────

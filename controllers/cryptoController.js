@@ -16,6 +16,33 @@ const IPN_CALLBACK_URL = process.env.NOWPAYMENTS_IPN_CALLBACK_URL; // e.g. https
 const SETTLED_STATUSES = ["finished"];
 
 // ─────────────────────────────────────────────
+// FIX: NOWPayments requires network-qualified codes for multi-chain
+// assets. Sending plain "usdt", "usdc", or "bnb" as pay_currency gets
+// rejected by their API (this was silently failing initCryptoPayment
+// for those three coins while btc/eth/sol/ltc/trx/doge/xrp worked fine,
+// since those are single-chain and their plain ticker is valid).
+//
+// The frontend COIN_INFO keys (btc, eth, usdt, usdc, bnb, sol, ltc,
+// trx, doge, xrp) don't need to change — this map translates the
+// internal key to whatever NOWPayments actually expects as
+// `pay_currency`. Defaults below pick one network per coin (cheapest/
+// most common); swap these if you want a different default network,
+// or extend to let the user choose a network per coin.
+// ─────────────────────────────────────────────
+const NOWPAYMENTS_CURRENCY_MAP = {
+  btc: "btc",
+  eth: "eth",
+  usdt: "usdttrc20", // TRC20 — lowest fees; use "usdterc20" / "usdtbsc" if you'd rather default elsewhere
+  usdc: "usdcerc20", // use "usdcbsc" / "usdcmatic" if you'd rather default elsewhere
+  bnb: "bnbbsc",
+  sol: "sol",
+  ltc: "ltc",
+  trx: "trx",
+  doge: "doge",
+  xrp: "xrp",
+};
+
+// ─────────────────────────────────────────────
 // SHARED: create (or reuse) a NOWPayments payment for any target type
 // ─────────────────────────────────────────────
 async function createCryptoPayment({
@@ -27,12 +54,23 @@ async function createCryptoPayment({
   amountNGN,
   description,
 }) {
+  const internalCurrency = currency.toLowerCase();
+  const nowPayCurrency = NOWPAYMENTS_CURRENCY_MAP[internalCurrency];
+
+  if (!nowPayCurrency) {
+    const err = new Error(`Unsupported currency: ${currency}`);
+    err.status = 400;
+    throw err;
+  }
+
   // Reuse a still-open payment attempt for this target+coin instead of
   // spawning a new deposit address every time the tab is reopened.
+  // Keyed off the internal currency (what the frontend/DB use), not the
+  // NOWPayments network code.
   const existing = await CryptoPayment.findOne({
     targetType,
     targetId,
-    currency: currency.toLowerCase(),
+    currency: internalCurrency,
     status: { $in: ["waiting", "confirming"] },
   });
   if (existing) return { payment: existing, created: false };
@@ -48,7 +86,7 @@ async function createCryptoPayment({
     body: JSON.stringify({
       price_amount: amountNGN,
       price_currency: "ngn",
-      pay_currency: currency.toLowerCase(),
+      pay_currency: nowPayCurrency,
       order_id: nowOrderId,
       order_description: description,
       ipn_callback_url: IPN_CALLBACK_URL,
@@ -70,7 +108,8 @@ async function createCryptoPayment({
     targetModel,
     targetId,
     ...(userId ? { user: userId } : {}), // omitted entirely for guest bookings
-    currency: currency.toLowerCase(),
+    currency: internalCurrency,
+    currencyNetwork: nowPayCurrency, // NEW — record exactly which NOWPayments code was used
     nowPaymentId: String(data.payment_id),
     nowOrderId,
     payAddress: data.pay_address,
@@ -117,7 +156,7 @@ export const initCryptoPayment = async (req, res) => {
     return res.status(created ? 201 : 200).json(payment);
   } catch (err) {
     console.error("initCryptoPayment error:", err.message);
-    return res.status(500).json({ message: "Could not initialize crypto payment" });
+    return res.status(err.status || 500).json({ message: err.status ? err.message : "Could not initialize crypto payment" });
   }
 };
 
