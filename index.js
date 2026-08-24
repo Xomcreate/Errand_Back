@@ -26,6 +26,7 @@ import vendorPlanRoutes from "./routes/vendorPlanRoutes.js";
 import jobRoutes from "./routes/jobRoutes.js";
 import serviceRoutes from "./routes/serviceRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
+import reportRoutes from "./routes/reportRoutes.js";
 import cryptoRoutes from "./routes/cryptoRoutes.js";
 
 import { errorHandler } from "./middleware/errorMiddleware.js";
@@ -73,6 +74,7 @@ app.use("/api/contacts",        contactRoutes);
 app.use("/api/insider",         insiderRoutes);
 app.use("/api/seller",          sellerInquiryRoutes);
 app.use("/api/products",        productRoutes);
+app.use("/api/reports",         reportRoutes);
 app.use("/api/categories",      categoryRoutes);
 app.use("/api/reviews",         reviewRoutes);
 app.use("/api/vendor-reviews",  vendorReviewRoutes);
